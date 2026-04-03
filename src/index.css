@@ -1,0 +1,780 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* MedLibPro — Premium Dark Futuristic Design System */
+
+@layer base {
+  :root {
+    /* Primary - Electric Teal */
+    --primary: 174 72% 46%;
+    --primary-foreground: 220 20% 6%;
+
+    /* Background - Deep Space */
+    --background: 222 47% 6%;
+    --foreground: 210 40% 92%;
+
+    /* Cards - Elevated dark glass */
+    --card: 222 40% 9%;
+    --card-foreground: 210 40% 92%;
+
+    /* Secondary - Slate depths */
+    --secondary: 220 30% 14%;
+    --secondary-foreground: 210 25% 80%;
+
+    /* Muted - Subtle cosmic */
+    --muted: 220 25% 12%;
+    --muted-foreground: 215 20% 55%;
+
+    /* Accent - Luminous Cyan */
+    --accent: 174 72% 46%;
+    --accent-foreground: 220 20% 6%;
+
+    /* Success */
+    --success: 152 69% 40%;
+    --success-foreground: 0 0% 100%;
+
+    /* Warning - Amber Glow */
+    --warning: 38 95% 55%;
+    --warning-foreground: 0 0% 8%;
+
+    /* Popover */
+    --popover: 222 40% 9%;
+    --popover-foreground: 210 40% 92%;
+
+    /* Border - Subtle glow lines */
+    --border: 220 20% 16%;
+    --input: 220 20% 16%;
+    --ring: 174 72% 46%;
+
+    /* Destructive */
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+
+    --radius: 0.75rem;
+
+    /* Custom futuristic tokens */
+    --gradient-hero: linear-gradient(135deg, hsl(222 47% 6%) 0%, hsl(220 40% 10%) 40%, hsl(222 47% 6%) 100%);
+    --gradient-card: linear-gradient(145deg, hsl(222 40% 10%) 0%, hsl(222 40% 8%) 100%);
+    --gradient-cta: linear-gradient(135deg, hsl(38 95% 55%) 0%, hsl(28 90% 50%) 100%);
+    --gradient-premium: linear-gradient(135deg, hsl(174 72% 46%) 0%, hsl(190 70% 35%) 100%);
+    --gradient-glow: linear-gradient(135deg, hsl(174 72% 46% / 0.15) 0%, hsl(220 60% 50% / 0.08) 100%);
+
+    --shadow-sm: 0 1px 2px 0 hsl(222 47% 2% / 0.3);
+    --shadow-md: 0 4px 12px -2px hsl(222 47% 2% / 0.4);
+    --shadow-lg: 0 10px 25px -5px hsl(222 47% 2% / 0.5);
+    --shadow-xl: 0 20px 40px -10px hsl(222 47% 2% / 0.6);
+    --shadow-card: 0 2px 8px 0 hsl(222 47% 2% / 0.3), 0 0 1px 0 hsl(174 72% 46% / 0.1);
+    --shadow-card-hover: 0 8px 30px -5px hsl(222 47% 2% / 0.5), 0 0 20px -5px hsl(174 72% 46% / 0.15);
+    --shadow-glow: 0 0 20px -5px hsl(174 72% 46% / 0.3);
+    --shadow-glow-lg: 0 0 40px -10px hsl(174 72% 46% / 0.4);
+
+    /* Sidebar */
+    --sidebar-background: 222 47% 7%;
+    --sidebar-foreground: 210 40% 85%;
+    --sidebar-primary: 174 72% 46%;
+    --sidebar-primary-foreground: 220 20% 6%;
+    --sidebar-accent: 220 30% 14%;
+    --sidebar-accent-foreground: 210 40% 85%;
+    --sidebar-border: 220 20% 14%;
+    --sidebar-ring: 174 72% 46%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply tracking-tight font-semibold;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: hsl(222 47% 6%);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(220 20% 20%);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(174 72% 46% / 0.5);
+  }
+}
+
+@layer components {
+  /* Hero gradient with animated mesh */
+  .medical-gradient {
+    background: var(--gradient-hero);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .medical-gradient::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: 
+      radial-gradient(ellipse 80% 50% at 50% -20%, hsl(174 72% 46% / 0.12) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 80% 50%, hsl(220 80% 50% / 0.08) 0%, transparent 50%),
+      radial-gradient(ellipse 40% 60% at 20% 80%, hsl(174 72% 46% / 0.06) 0%, transparent 50%);
+    pointer-events: none;
+  }
+
+  .cta-gradient {
+    background: var(--gradient-cta);
+  }
+
+  .premium-gradient {
+    background: var(--gradient-premium);
+  }
+
+  /* Glassmorphism cards */
+  .glass-card {
+    background: hsl(222 40% 9% / 0.7);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid hsl(174 72% 46% / 0.1);
+    box-shadow: var(--shadow-card);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .glass-card:hover {
+    border-color: hsl(174 72% 46% / 0.25);
+    box-shadow: var(--shadow-card-hover);
+    transform: translateY(-2px);
+  }
+
+  .card-elevated {
+    background: var(--gradient-card);
+    border: 1px solid hsl(220 20% 16%);
+    box-shadow: var(--shadow-card);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .card-elevated:hover {
+    border-color: hsl(174 72% 46% / 0.2);
+    box-shadow: var(--shadow-card-hover);
+    transform: translateY(-2px);
+  }
+
+  /* Glowing borders */
+  .glow-border {
+    border: 1px solid hsl(174 72% 46% / 0.15);
+    box-shadow: inset 0 0 20px hsl(174 72% 46% / 0.03), 0 0 15px hsl(174 72% 46% / 0.05);
+  }
+
+  .glow-border:hover {
+    border-color: hsl(174 72% 46% / 0.3);
+    box-shadow: inset 0 0 30px hsl(174 72% 46% / 0.05), 0 0 25px hsl(174 72% 46% / 0.1);
+  }
+
+  /* Animated grid background */
+  .grid-bg {
+    background-image:
+      linear-gradient(hsl(220 20% 16% / 0.5) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(220 20% 16% / 0.5) 1px, transparent 1px);
+    background-size: 60px 60px;
+  }
+
+  .grid-bg-subtle {
+    background-image:
+      linear-gradient(hsl(220 20% 16% / 0.3) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(220 20% 16% / 0.3) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  /* Dot pattern */
+  .dot-pattern {
+    background-image: radial-gradient(hsl(174 72% 46% / 0.1) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  .search-result-highlight {
+    @apply bg-warning/20 text-warning-foreground px-1 rounded font-medium;
+  }
+
+  .medical-tag {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/20;
+  }
+
+  .owned-badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success border border-success/20;
+  }
+
+  .trending-badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-warning/10 text-warning border border-warning/30;
+  }
+
+  /* Futuristic text glow */
+  .text-glow {
+    text-shadow: 0 0 20px hsl(174 72% 46% / 0.4), 0 0 40px hsl(174 72% 46% / 0.2);
+  }
+
+  .text-glow-subtle {
+    text-shadow: 0 0 10px hsl(174 72% 46% / 0.2);
+  }
+
+  /* Animated underline */
+  .link-underline {
+    position: relative;
+  }
+  .link-underline::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: linear-gradient(90deg, hsl(174 72% 46%), hsl(220 80% 60%));
+    transform: scaleX(0);
+    transform-origin: right;
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .link-underline:hover::after {
+    transform: scaleX(1);
+    transform-origin: left;
+  }
+
+  /* Stat counter card */
+  .stat-card {
+    @apply relative overflow-hidden;
+  }
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, hsl(174 72% 46% / 0.5), transparent);
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out forwards;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.4s ease-out forwards;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.2s ease-out forwards;
+  }
+
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
+
+  .animate-pulse-glow {
+    animation: pulseGlow 3s ease-in-out infinite;
+  }
+
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { 
+    box-shadow: 0 0 5px hsl(174 72% 46% / 0.2);
+  }
+  50% { 
+    box-shadow: 0 0 20px hsl(174 72% 46% / 0.4), 0 0 40px hsl(174 72% 46% / 0.1);
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* ========================================
+   Front Matter Section Styles
+   ======================================== */
+
+.fm-section {
+  padding: 1.5rem 0;
+}
+
+.fm-section + .fm-section {
+  margin-top: 1.5rem;
+}
+
+.fm-divider {
+  border: none;
+  border-top: 1px solid hsl(var(--border) / 0.4);
+  margin: 2rem 0;
+}
+
+.fm-section-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: hsl(var(--foreground));
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid hsl(var(--primary) / 0.3);
+}
+
+/* Title / Copyright */
+.fm-title-copyright,
+.fm-copyright {
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: hsl(var(--foreground) / 0.8);
+}
+
+.fm-title-copyright h1,
+.fm-copyright h1 {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: hsl(var(--foreground));
+  margin: 1rem 0;
+}
+
+.fm-title-copyright a,
+.fm-copyright a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.fm-title-copyright figure {
+  margin: 1.5rem 0;
+  text-align: center;
+}
+
+.fm-title-copyright figure img {
+  max-width: 200px;
+  margin: 0 auto;
+  opacity: 0.8;
+}
+
+/* Table of Contents */
+.fm-toc {
+  padding: 1.5rem 0;
+}
+
+.fm-toc a {
+  color: hsl(var(--primary));
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 0.95rem;
+  transition: color 0.15s;
+}
+
+.fm-toc a:hover {
+  color: hsl(var(--primary) / 0.8);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.fm-toc div > div {
+  padding: 0.2rem 0;
+}
+
+.fm-toc div > div > div {
+  padding-left: 1.5rem;
+}
+
+.fm-toc div > div > div > div {
+  padding-left: 1.5rem;
+}
+
+/* Dedication */
+.fm-dedication {
+  max-width: 36rem;
+  font-size: 0.95rem;
+  line-height: 1.8;
+  color: hsl(var(--foreground) / 0.9);
+}
+
+.fm-dedication p {
+  margin-bottom: 1rem;
+}
+
+/* Contributors */
+.fm-contributors {
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+/* Generic front matter */
+.fm-generic {
+  font-size: 0.95rem;
+  line-height: 1.8;
+  color: hsl(var(--foreground) / 0.9);
+}
+
+.fm-generic h1 { font-size: 1.75rem; font-weight: 700; color: hsl(var(--foreground)); margin: 1rem 0; }
+.fm-generic h2 { font-size: 1.25rem; font-weight: 600; color: hsl(var(--foreground)); margin: 1.5rem 0 0.75rem; }
+.fm-generic p { margin-bottom: 0.75rem; }
+.fm-generic a { color: hsl(var(--primary)); text-decoration: underline; text-underline-offset: 2px; }
+
+/* Preface */
+.fm-preface {
+  font-size: 0.95rem;
+  line-height: 1.8;
+  color: hsl(var(--foreground) / 0.9);
+}
+
+.fm-preface p {
+  margin-bottom: 1rem;
+}
+
+/* ========================================
+   Reader Themes
+   ======================================== */
+
+.reader-theme-sepia {
+  background-color: hsl(36 30% 88%) !important;
+  color: hsl(30 10% 20%) !important;
+}
+
+.reader-theme-sepia .prose,
+.reader-theme-sepia .prose * {
+  color: hsl(30 10% 20%) !important;
+}
+
+.reader-theme-sepia .prose h1,
+.reader-theme-sepia .prose h2,
+.reader-theme-sepia .prose h3,
+.reader-theme-sepia .prose h4 {
+  color: hsl(30 15% 15%) !important;
+}
+
+.reader-theme-sepia .prose a {
+  color: hsl(200 60% 35%) !important;
+}
+
+.reader-theme-light {
+  background-color: hsl(0 0% 100%) !important;
+  color: hsl(220 10% 15%) !important;
+}
+
+.reader-theme-light .prose,
+.reader-theme-light .prose * {
+  color: hsl(220 10% 15%) !important;
+}
+
+.reader-theme-light .prose h1,
+.reader-theme-light .prose h2,
+.reader-theme-light .prose h3,
+.reader-theme-light .prose h4 {
+  color: hsl(220 15% 10%) !important;
+}
+
+.reader-theme-light .prose a {
+  color: hsl(210 70% 40%) !important;
+}
+
+/* Focus mode: fade non-active chunks */
+.focus-mode .chunk-item {
+  opacity: 0.25;
+  transition: opacity 0.4s ease;
+}
+
+.focus-mode .chunk-item:hover,
+.focus-mode .chunk-item.chunk-active {
+  opacity: 1;
+}
+
+/* ========================================
+   Book Content — Proper book-like formatting
+   ======================================== */
+
+.book-content {
+  word-spacing: 0.02em;
+  letter-spacing: 0.01em;
+  line-height: 1.85;
+  color: hsl(var(--foreground));
+}
+
+/* Paragraphs — generous spacing like a real book */
+.book-content p {
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+  text-align: justify;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+  line-height: 1.85;
+}
+
+/* Empty paragraphs act as spacers */
+.book-content p:empty {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+/* First paragraph after a heading — no indent, slight extra top margin */
+.book-content h1 + p,
+.book-content h2 + p,
+.book-content h3 + p,
+.book-content h4 + p {
+  margin-top: 1rem;
+}
+
+/* Headings — clear visual hierarchy with breathing room */
+.book-content h1 {
+  margin-top: 2.5rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid hsl(var(--border) / 0.3);
+}
+
+.book-content h2 {
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+}
+
+.book-content h3 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.book-content h4 {
+  margin-top: 1.25rem;
+  margin-bottom: 0.4rem;
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+
+.book-content h5 {
+  margin-top: 1rem;
+  margin-bottom: 0.35rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.book-content h6 {
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.book-content strong,
+.book-content b {
+  font-weight: 700;
+  color: hsl(var(--foreground));
+}
+
+/* Italics for affiliations / metadata lines */
+.book-content em,
+.book-content i {
+  color: hsl(var(--foreground) / 0.85);
+}
+
+/* Line breaks — ensure they create visible spacing */
+.book-content br {
+  display: block;
+  content: "";
+  margin-top: 0.5rem;
+}
+
+/* Lists with proper spacing */
+.book-content ul,
+.book-content ol {
+  margin: 1rem 0;
+  padding-left: 1.5rem;
+}
+
+.book-content li {
+  margin: 0.35rem 0;
+}
+
+/* Figures */
+.book-content figure {
+  margin: 2rem 0;
+  text-align: center;
+}
+
+.book-content figure img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+  margin: 0 auto;
+}
+
+.book-content figcaption {
+  font-size: 0.85rem;
+  color: hsl(var(--muted-foreground));
+  margin-top: 0.75rem;
+  font-style: italic;
+  text-align: center;
+}
+
+/* Tables */
+.book-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.5rem 0;
+  font-size: 0.9em;
+}
+
+.book-content th {
+  background: hsl(var(--muted) / 0.5);
+  font-weight: 600;
+  padding: 0.6rem 0.75rem;
+  text-align: left;
+  border-bottom: 2px solid hsl(var(--border));
+}
+
+.book-content td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid hsl(var(--border) / 0.5);
+}
+
+/* Blockquotes */
+.book-content blockquote {
+  border-left: 3px solid hsl(var(--primary) / 0.4);
+  padding: 0.75rem 1.25rem;
+  background: hsl(var(--primary) / 0.04);
+  border-radius: 0 0.5rem 0.5rem 0;
+  margin: 1.5rem 0;
+  font-style: italic;
+}
+
+/* Superscript footnotes */
+.book-content sup {
+  font-size: 0.7em;
+  color: hsl(var(--primary));
+}
+
+/* Links */
+.book-content a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  transition: color 0.2s, text-decoration-color 0.2s;
+}
+
+.book-content a:hover {
+  color: hsl(var(--primary) / 0.8);
+}
+
+/* Horizontal rules — section dividers */
+.book-content hr {
+  margin: 2.5rem 0;
+  border: none;
+  border-top: 1px solid hsl(var(--border) / 0.4);
+}
+
+/* Divs acting as spacing blocks (common in EPUBs) */
+.book-content div + div {
+  margin-top: 0.75rem;
+}
+
+/* Ensure images inside paragraphs are block-level */
+.book-content p img {
+  display: block;
+  margin: 1.5rem auto;
+  max-width: 100%;
+  border-radius: 0.5rem;
+}
+
+/* Standalone images */
+.book-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.375rem;
+  margin: 1rem 0;
+}
+
+/* Preformatted / code blocks from EPUBs */
+.book-content pre {
+  background: hsl(var(--muted) / 0.4);
+  padding: 1rem 1.25rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 1.5rem 0;
+  font-size: 0.875em;
+  line-height: 1.6;
+}
+
+/* Definition lists (common in medical EPUBs) */
+.book-content dl {
+  margin: 1rem 0;
+}
+
+.book-content dt {
+  font-weight: 600;
+  margin-top: 0.75rem;
+  color: hsl(var(--foreground));
+}
+
+.book-content dd {
+  margin-left: 1.25rem;
+  margin-top: 0.25rem;
+  color: hsl(var(--foreground) / 0.9);
+}
+
+/* Section/chapter title pages — first content area */
+.book-content > p:first-child {
+  margin-top: 0;
+}
+
+/* Small text / copyright notices */
+.book-content small {
+  font-size: 0.85em;
+  color: hsl(var(--muted-foreground));
+  line-height: 1.6;
+}
+
+/* Span blocks used as line separators in some EPUBs */
+.book-content span {
+  line-height: inherit;
+}
