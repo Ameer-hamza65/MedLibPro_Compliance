@@ -222,11 +222,22 @@ export function OutlineSidebar({
       const viewportRect = viewport.getBoundingClientRect();
       const targetRect = target.getBoundingClientRect();
       const padding = 16;
-      const isAboveViewport = targetRect.top < viewportRect.top + padding;
-      const isBelowViewport = targetRect.bottom > viewportRect.bottom - padding;
+      const targetTop = targetRect.top - viewportRect.top + viewport.scrollTop;
+      const targetBottom = targetTop + targetRect.height;
+      const visibleTop = viewport.scrollTop;
+      const visibleBottom = visibleTop + viewport.clientHeight;
+      const isAboveViewport = targetTop < visibleTop + padding;
+      const isBelowViewport = targetBottom > visibleBottom - padding;
 
-      if (isAboveViewport || isBelowViewport) {
-        target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      viewport.scrollLeft = 0;
+
+      if (isAboveViewport) {
+        viewport.scrollTo({ top: Math.max(targetTop - padding, 0), behavior: 'smooth' });
+      } else if (isBelowViewport) {
+        viewport.scrollTo({
+          top: Math.max(targetBottom - viewport.clientHeight + padding, 0),
+          behavior: 'smooth',
+        });
       }
     };
 
