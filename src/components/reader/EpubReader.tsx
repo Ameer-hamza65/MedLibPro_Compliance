@@ -11,6 +11,7 @@ interface EpubReaderProps {
   bookId: string;
   fontSize?: number;
   lineHeight?: number;
+  fontFamily?: string;
   theme?: string;
   focusMode?: boolean;
   navigateToHref?: string;
@@ -28,7 +29,8 @@ export function EpubReader({
   bookId,
   fontSize = 18,
   lineHeight = 1.8,
-  theme = 'light',
+  fontFamily = 'sans',
+  theme = 'default',
   focusMode = false,
   navigateToHref,
   onTocLoaded,
@@ -60,6 +62,7 @@ export function EpubReader({
     containerId,
     fontSize,
     lineHeight,
+    fontFamily,
     theme,
     focusMode,
   });
@@ -187,7 +190,7 @@ export function EpubReader({
         ref={popoverAnchorRef}
         className={cn(
           'h-full w-full overflow-auto scroll-smooth',
-          theme === 'dark' ? 'bg-slate-900' : theme === 'sepia' ? 'bg-amber-50' : 'bg-white',
+          theme === 'default' ? 'bg-slate-900' : theme === 'sepia' ? 'bg-amber-50' : 'bg-white',
         )}
         style={{
           minHeight: '100%',

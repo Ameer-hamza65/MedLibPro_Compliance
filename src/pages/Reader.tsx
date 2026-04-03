@@ -45,15 +45,17 @@ export default function Reader() {
 
   const bookId = searchParams.get('book') || '';
   const chapterId = searchParams.get('chapter') || '';
+  const chapterTitleParam = searchParams.get('chapterTitle') || '';
   const isBookInfoPage = chapterId === '__book-info__';
   const isAutoOpenFirstChapter = chapterId === '__first__';
+  const isFindByTitle = chapterId === '__find__';
   const epubChapterHref = useMemo(() => {
-    if (!chapterId || isBookInfoPage || isAutoOpenFirstChapter) return '';
+    if (!chapterId || isBookInfoPage || isAutoOpenFirstChapter || isFindByTitle) return '';
     if (chapterId.startsWith('epub:')) {
       return decodeURIComponent(chapterId.slice(5));
     }
     return decodeURIComponent(chapterId);
-  }, [chapterId, isBookInfoPage, isAutoOpenFirstChapter]);
+  }, [chapterId, isBookInfoPage, isAutoOpenFirstChapter, isFindByTitle]);
 
   const book = useMemo(
     () => books.find((b) => b.id === bookId),
@@ -68,7 +70,7 @@ export default function Reader() {
       if (useEpubJs && !isBookInfoPage) {
         return {
           id: chapterId || 'epub-chapter',
-          title: 'Chapter',
+          title: chapterTitleParam || 'Chapter',
           content: '',
           pageNumber: 0,
           tags: [],
@@ -79,9 +81,19 @@ export default function Reader() {
     if (isBookInfoPage) {
       return { id: '__book-info__', title: 'Book Information', content: '', pageNumber: 0, tags: [] } as Chapter;
     }
+    if (isFindByTitle) {
+      // For EPUB find-by-title, return a stub chapter — EPUB.js renders content
+      return {
+        id: 'epub-find',
+        title: chapterTitleParam || 'Chapter',
+        content: '',
+        pageNumber: 0,
+        tags: [],
+      } as Chapter;
+    }
     if (chapterId) return book.tableOfContents.find(c => c.id === chapterId);
     return { id: '__book-info__', title: 'Book Information', content: '', pageNumber: 0, tags: [] } as Chapter;
-  }, [book, chapterId, isBookInfoPage, useEpubJs]);
+  }, [book, chapterId, isBookInfoPage, useEpubJs, isFindByTitle, chapterTitleParam]);
 
   useEffect(() => {
     if (book && !useEpubJs && book.tableOfContents && book.tableOfContents.length > 0 && !chapterId && chapter) {
@@ -118,6 +130,30 @@ export default function Reader() {
   const [epubToc, setEpubToc] = useState<EpubTocItem[]>([]);
   const [epubVisibleText, setEpubVisibleText] = useState<string>('');
   const [epubCurrentHref, setEpubCurrentHref] = useState<string>('');
+
+  // When navigating from search results by chapter title, find matching TOC entry
+  const findByTitleDone = useRef(false);
+  useEffect(() => {
+    if (!isFindByTitle || !chapterTitleParam || epubToc.length === 0 || findByTitleDone.current) return;
+    const normalizedTarget = chapterTitleParam.toLowerCase().trim().replace(/\s+/g, ' ');
+    // Try exact match first, then substring, then word overlap
+    const match = epubToc.find(t => t.label.toLowerCase().trim() === normalizedTarget)
+      || epubToc.find(t => t.label.toLowerCase().trim().includes(normalizedTarget))
+      || epubToc.find(t => normalizedTarget.includes(t.label.toLowerCase().trim()))
+      || epubToc.find(t => {
+        const words = normalizedTarget.split(/\s+/).filter(w => w.length > 2);
+        const label = t.label.toLowerCase();
+        return words.filter(w => label.includes(w)).length >= Math.ceil(words.length * 0.5);
+      });
+    if (match) {
+      findByTitleDone.current = true;
+      setEpubCurrentHref(match.href);
+      // Also update URL so the chapter persists on refresh
+      if (book) {
+        navigate(`/reader?book=${bookId}&chapter=epub:${encodeURIComponent(match.href)}`, { replace: true });
+      }
+    }
+  }, [isFindByTitle, chapterTitleParam, epubToc, book, bookId, navigate]);
 
   const { stats, trackEvent, formatTime } = useReadingSession(bookId, chapterId);
   const {
@@ -331,6 +367,7 @@ export default function Reader() {
         bookId={book.id}
         fontSize={prefs.fontSize}
         lineHeight={prefs.lineHeight}
+        fontFamily={prefs.fontFamily}
         theme={prefs.theme}
         focusMode={prefs.focusMode}
         navigateToHref={epubCurrentHref || epubChapterHref}

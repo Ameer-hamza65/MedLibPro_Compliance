@@ -21,6 +21,7 @@ interface UseEpubReaderOptions {
   containerId: string;
   fontSize?: number;
   lineHeight?: number;
+  fontFamily?: string;
   theme?: string;
   focusMode?: boolean;
 }
@@ -35,7 +36,13 @@ function flattenToc(items: NavItem[]): EpubTocItem[] {
 }
 
 export function useEpubReader(options: UseEpubReaderOptions) {
-  const { filePath, containerId, fontSize = 18, lineHeight = 1.8, theme = 'light', focusMode = false } = options;
+  const { filePath, containerId, fontSize = 18, lineHeight = 1.8, fontFamily = 'sans', theme = 'default', focusMode = false } = options;
+  const isDark = theme === 'default';
+
+  const fontFamilyCSS =
+    fontFamily === 'serif' ? '"Georgia", "Times New Roman", serif' :
+    fontFamily === 'mono' ? '"JetBrains Mono", "Courier New", monospace' :
+    '"Inter", system-ui, -apple-system, sans-serif';
 
   const bookRef = useRef<Book | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
@@ -105,10 +112,10 @@ export function useEpubReader(options: UseEpubReaderOptions) {
           'body': {
             'font-size': `${fontSize}px !important`,
             'line-height': `${lineHeight} !important`,
-            'font-family': '"Georgia", "Times New Roman", serif !important',
+            'font-family': `${fontFamilyCSS} !important`,
             'padding': '20px 40px !important',
             'max-width': '100% !important',
-            'color': theme === 'dark' ? '#e2e8f0 !important' : '#1a202c !important',
+            'color': isDark ? '#e2e8f0 !important' : theme === 'sepia' ? '#3d2e1e !important' : '#1a202c !important',
             'background': 'transparent !important',
           },
           'p': {
@@ -116,7 +123,7 @@ export function useEpubReader(options: UseEpubReaderOptions) {
             'text-align': 'justify !important',
           },
           'h1, h2, h3, h4, h5, h6': {
-            'color': theme === 'dark' ? '#f1f5f9 !important' : '#111827 !important',
+            'color': isDark ? '#f1f5f9 !important' : '#111827 !important',
             'margin-top': '1.5em !important',
             'margin-bottom': '0.5em !important',
           },
@@ -200,7 +207,7 @@ export function useEpubReader(options: UseEpubReaderOptions) {
         bookRef.current = null;
       }
     };
-  }, [filePath, containerId]);
+  }, [filePath, containerId, fontSize, lineHeight, fontFamily, theme]);
 
   // Update theme/font when prefs change
   useEffect(() => {
@@ -209,7 +216,8 @@ export function useEpubReader(options: UseEpubReaderOptions) {
       'body': {
         'font-size': `${fontSize}px !important`,
         'line-height': `${lineHeight} !important`,
-        'color': theme === 'dark' ? '#e2e8f0 !important' : '#1a202c !important',
+        'font-family': `${fontFamilyCSS} !important`,
+        'color': isDark ? '#e2e8f0 !important' : theme === 'sepia' ? '#3d2e1e !important' : '#1a202c !important',
         'background': 'transparent !important',
       },
     });
@@ -220,7 +228,7 @@ export function useEpubReader(options: UseEpubReaderOptions) {
         renditionRef.current.display(loc.start.cfi);
       }
     } catch {}
-  }, [fontSize, lineHeight, theme, isReady]);
+  }, [fontSize, lineHeight, fontFamily, fontFamilyCSS, theme, isDark, isReady]);
 
   const goToChapter = useCallback((href: string) => {
     if (!renditionRef.current) return;
