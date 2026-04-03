@@ -485,8 +485,8 @@ export function OutlineSidebar({
       </div>
 
       {/* Scrollable outline tree */}
-      <ScrollArea className="flex-1">
-        <div className="py-2 px-1">
+      <ScrollArea className="flex-1 overflow-x-hidden">
+        <div className="py-2 px-1 overflow-hidden">
           {/* Book Info link */}
           <button
             onClick={() => onSelectChapter({ id: '__book-info__', title: 'Book Information', content: '', pageNumber: 0, tags: [] } as Chapter)}
