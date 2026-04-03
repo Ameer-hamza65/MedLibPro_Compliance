@@ -1,6 +1,5 @@
 🚀 Project Setup Guide (Run Locally in Your IDE)
 This guide will help you set up and run the project on your computer using your preferred IDE (VS Code, WebStorm, etc.).
-Pushed changes will automatically sync with Lovable, so you can work locally and still see updates reflected there.
 📋 Prerequisites
 Before you begin, make sure the following are installed on your PC:
 1️⃣ Install Node.js & npm
@@ -26,7 +25,6 @@ http://localhost:8080/
 
 Open that link in your browser to preview the project.🚀 Project Setup Guide (Run Locally in Your IDE)
 This guide will help you set up and run the project on your computer using your preferred IDE (VS Code, WebStorm, etc.).
-Pushed changes will automatically sync with Lovable, so you can work locally and still see updates reflected there.
 📋 Prerequisites
 Before you begin, make sure the following are installed on your PC:
 1️⃣ Install Node.js & npm
