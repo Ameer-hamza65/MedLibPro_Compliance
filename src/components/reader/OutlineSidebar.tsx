@@ -5,6 +5,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { EpubBook, Chapter } from '@/data/mockEpubData';
 import { cn } from '@/lib/utils';
 import type { EpubTocItem } from '@/hooks/useEpubReader';
+import type { PdfTocItem } from '@/hooks/usePdfReader';
 import { SidebarAIInput } from './SidebarAIInput';
 
 interface OutlineSidebarProps {
@@ -16,6 +17,9 @@ interface OutlineSidebarProps {
   epubToc?: EpubTocItem[];
   epubCurrentHref?: string;
   onEpubNavigate?: (href: string) => void;
+  pdfToc?: PdfTocItem[];
+  pdfCurrentPage?: number;
+  onPdfNavigate?: (item: PdfTocItem) => void;
   // AI sidebar
   onAIAsk?: (question: string) => void;
   aiLoading?: boolean;
@@ -39,6 +43,80 @@ function extractHeadings(html: string): { id: string; title: string; level: numb
   }
 }
 
+function safeDecodeHref(href: string): string {
+  try {
+    return decodeURIComponent(href);
+  } catch {
+    return href;
+  }
+}
+
+function normalizeEpubHref(href: string) {
+  const decoded = safeDecodeHref(href || '').replace(/^\/+/, '').replace(/^\.\//, '').trim();
+  const [path = '', fragment = ''] = decoded.split('#');
+  return {
+    path: path.toLowerCase(),
+    fragment: fragment.toLowerCase(),
+    full: `${path.toLowerCase()}#${fragment.toLowerCase()}`,
+  };
+}
+
+function flattenEpubItems(items: EpubTocItem[]): EpubTocItem[] {
+  return items.flatMap((item) => [item, ...flattenEpubItems(item.subitems)]);
+}
+
+function flattenPdfItems(items: PdfTocItem[]): PdfTocItem[] {
+  return items.flatMap((item) => [item, ...flattenPdfItems(item.subitems)]);
+}
+
+function collectExpandableIds<T extends { id: string; subitems: T[] }>(items: T[]): string[] {
+  return items.flatMap((item) => (item.subitems.length ? [item.id, ...collectExpandableIds(item.subitems)] : []));
+}
+
+function collectAncestorIds<T extends { id: string; subitems: T[] }>(items: T[], targetId: string, trail: string[] = []): string[] {
+  for (const item of items) {
+    if (item.id === targetId) return trail;
+    const nextTrail = collectAncestorIds(item.subitems, targetId, [...trail, item.id]);
+    if (nextTrail.length) return nextTrail;
+  }
+  return [];
+}
+
+function hasActiveDescendant<T extends { id: string; subitems: T[] }>(items: T[], activeId?: string | null): boolean {
+  if (!activeId) return false;
+  return items.some((item) => item.id === activeId || hasActiveDescendant(item.subitems, activeId));
+}
+
+function findActiveEpubItem(items: EpubTocItem[], currentHref?: string): EpubTocItem | null {
+  if (!currentHref) return null;
+  const flattened = flattenEpubItems(items);
+  const current = normalizeEpubHref(currentHref);
+
+  const exact = flattened.find((item) => normalizeEpubHref(item.href).full === current.full);
+  if (exact) return exact;
+
+  const samePathItems = flattened.filter((item) => normalizeEpubHref(item.href).path === current.path);
+  const matchingFragment = samePathItems
+    .filter((item) => {
+      const fragment = normalizeEpubHref(item.href).fragment;
+      return fragment && (fragment === current.fragment || current.fragment.startsWith(fragment));
+    })
+    .sort((a, b) => normalizeEpubHref(b.href).fragment.length - normalizeEpubHref(a.href).fragment.length)[0];
+
+  return matchingFragment || samePathItems[0] || null;
+}
+
+function findActivePdfItem(items: PdfTocItem[], currentPage?: number): PdfTocItem | null {
+  if (!currentPage) return null;
+  const flattened = flattenPdfItems(items).sort((a, b) => a.pageNumber - b.pageNumber);
+  let active: PdfTocItem | null = flattened[0] || null;
+  for (const item of flattened) {
+    if (item.pageNumber <= currentPage) active = item;
+    else break;
+  }
+  return active;
+}
+
 export function OutlineSidebar({
   book,
   currentChapterId,
@@ -48,11 +126,15 @@ export function OutlineSidebar({
   epubToc,
   epubCurrentHref,
   onEpubNavigate,
+  pdfToc,
+  pdfCurrentPage,
+  onPdfNavigate,
   onAIAsk,
   aiLoading,
   aiLastAnswer,
 }: OutlineSidebarProps) {
   const isEpubMode = !!(epubToc && epubToc.length > 0);
+  const isPdfMode = !!(pdfToc && pdfToc.length > 0);
 
   const frontMatter = book.tableOfContents.filter(ch => ch.category === 'front-matter');
   const mainChapters = book.tableOfContents.filter(ch => !ch.category || ch.category === 'chapter');
@@ -61,6 +143,16 @@ export function OutlineSidebar({
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['contents']));
   const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set([currentChapterId]));
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
+
+  const activeEpubItem = useMemo(
+    () => (isEpubMode ? findActiveEpubItem(epubToc || [], epubCurrentHref) : null),
+    [isEpubMode, epubToc, epubCurrentHref]
+  );
+
+  const activePdfItem = useMemo(
+    () => (isPdfMode ? findActivePdfItem(pdfToc || [], pdfCurrentPage) : null),
+    [isPdfMode, pdfToc, pdfCurrentPage]
+  );
 
   const currentHeadings = useMemo(
     () => extractHeadings(currentChapterContent || ''),
@@ -78,10 +170,11 @@ export function OutlineSidebar({
   // Collect all section IDs for open/close all
   const allSectionIds = useMemo(() => {
     if (isEpubMode && epubToc) {
-      const ids = new Set<string>(['contents']);
-      epubToc.forEach(item => {
-        if (item.subitems.length > 0) ids.add(item.id);
-      });
+      const ids = new Set<string>(['contents', ...collectExpandableIds(epubToc)]);
+      return ids;
+    }
+    if (isPdfMode && pdfToc) {
+      const ids = new Set<string>(['contents', ...collectExpandableIds(pdfToc)]);
       return ids;
     }
     const ids = new Set<string>();
@@ -89,7 +182,20 @@ export function OutlineSidebar({
     ids.add('chapters');
     if (appendix.length) ids.add('appendix');
     return ids;
-  }, [isEpubMode, epubToc, frontMatter.length, appendix.length]);
+  }, [isEpubMode, isPdfMode, epubToc, pdfToc, frontMatter.length, appendix.length]);
+
+  useEffect(() => {
+    const activeId = activeEpubItem?.id || activePdfItem?.id;
+    if (!activeId) return;
+
+    const ancestorIds = activeEpubItem
+      ? collectAncestorIds(epubToc || [], activeId)
+      : activePdfItem
+      ? collectAncestorIds(pdfToc || [], activeId)
+      : [];
+
+    setExpandedSections((prev) => new Set([...prev, 'contents', ...ancestorIds]));
+  }, [activeEpubItem, activePdfItem, epubToc, pdfToc]);
 
   const handleOpenAll = useCallback(() => {
     setExpandedSections(new Set(allSectionIds));
@@ -194,6 +300,105 @@ export function OutlineSidebar({
     );
   };
 
+  const renderEpubItem = useCallback((item: EpubTocItem, depth = 0) => {
+    const isCurrent = activeEpubItem?.id === item.id;
+    const descendantActive = hasActiveDescendant(item.subitems, activeEpubItem?.id);
+    const isOpen = expandedSections.has(item.id) || descendantActive;
+    const hasSubitems = item.subitems.length > 0;
+
+    return (
+      <div key={item.id} className="space-y-0.5">
+        <div className="flex items-start gap-1">
+          {hasSubitems ? (
+            <button
+              type="button"
+              onClick={() => toggleSection(item.id)}
+              className="mt-1 rounded-sm p-1 text-muted-foreground transition-colors hover:text-foreground"
+              aria-label={isOpen ? 'Collapse section' : 'Expand section'}
+            >
+              <ChevronDown className={cn('h-3 w-3 transition-transform', !isOpen && '-rotate-90')} />
+            </button>
+          ) : (
+            <div className="w-5 flex-shrink-0" />
+          )}
+
+          <button
+            type="button"
+            onClick={() => onEpubNavigate?.(item.href)}
+            className={cn(
+              'flex-1 min-w-0 rounded-md px-3 py-1.5 text-left text-sm transition-colors',
+              isCurrent
+                ? 'bg-primary/5 font-semibold text-primary'
+                : descendantActive
+                ? 'text-primary/80'
+                : 'text-foreground hover:bg-muted/50'
+            )}
+            style={{ marginLeft: `${depth * 12}px` }}
+          >
+            <span className="block truncate">{item.label}</span>
+          </button>
+        </div>
+
+        {hasSubitems && isOpen && (
+          <div className="ml-3 border-l border-border/60 pl-1">
+            {item.subitems.map((subitem) => renderEpubItem(subitem, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  }, [activeEpubItem?.id, expandedSections, onEpubNavigate]);
+
+  const renderPdfItem = useCallback((item: PdfTocItem, depth = 0) => {
+    const isCurrent = activePdfItem?.id === item.id;
+    const descendantActive = hasActiveDescendant(item.subitems, activePdfItem?.id);
+    const isOpen = expandedSections.has(item.id) || descendantActive;
+    const hasSubitems = item.subitems.length > 0;
+
+    return (
+      <div key={item.id} className="space-y-0.5">
+        <div className="flex items-start gap-1">
+          {hasSubitems ? (
+            <button
+              type="button"
+              onClick={() => toggleSection(item.id)}
+              className="mt-1 rounded-sm p-1 text-muted-foreground transition-colors hover:text-foreground"
+              aria-label={isOpen ? 'Collapse section' : 'Expand section'}
+            >
+              <ChevronDown className={cn('h-3 w-3 transition-transform', !isOpen && '-rotate-90')} />
+            </button>
+          ) : (
+            <div className="w-5 flex-shrink-0" />
+          )}
+
+          <button
+            type="button"
+            onClick={() => onPdfNavigate?.(item)}
+            className={cn(
+              'flex-1 min-w-0 rounded-md px-3 py-1.5 text-left text-sm transition-colors',
+              isCurrent
+                ? 'bg-primary/5 font-semibold text-primary'
+                : descendantActive
+                ? 'text-primary/80'
+                : 'text-foreground hover:bg-muted/50'
+            )}
+            style={{ marginLeft: `${depth * 12}px` }}
+          >
+            <div className="flex items-center gap-2">
+              <span className="truncate flex-1">{item.label}</span>
+              <span className="text-[10px] text-muted-foreground">p.{item.pageNumber}</span>
+            </div>
+          </button>
+        </div>
+
+        {hasSubitems && isOpen && (
+          <div className="ml-3 border-l border-border/60 pl-1">
+            {item.subitems.map((subitem) => renderPdfItem(subitem, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  }, [activePdfItem?.id, expandedSections, onPdfNavigate]);
+
   return (
     <div className="flex flex-col h-full bg-card border-r border-border/50">
       {/* Book header */}
@@ -254,7 +459,6 @@ export function OutlineSidebar({
           </button>
 
           {isEpubMode ? (
-            /* EPUB.js TOC */
             <div className="pb-1">
               <Collapsible open={expandedSections.has('contents')} onOpenChange={() => toggleSection('contents')}>
                 <CollapsibleTrigger className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold uppercase tracking-wider text-primary hover:text-primary/80 transition-colors">
@@ -262,66 +466,19 @@ export function OutlineSidebar({
                   <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", !expandedSections.has('contents') && "-rotate-90")} />
                 </CollapsibleTrigger>
                 <CollapsibleContent>
-                  <div className="pb-2 space-y-0.5">
-                    {epubToc!.map(tocItem => {
-                      const isCurrent = epubCurrentHref ? epubCurrentHref.includes(tocItem.href) : false;
-                      const hasSubitems = tocItem.subitems.length > 0;
-                      const isSubOpen = expandedSections.has(tocItem.id);
-
-                      return (
-                        <div key={tocItem.id}>
-                          {hasSubitems ? (
-                            <Collapsible open={isSubOpen} onOpenChange={() => toggleSection(tocItem.id)}>
-                              <div className="flex items-center">
-                                <CollapsibleTrigger className="p-1">
-                                  <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform", !isSubOpen && "-rotate-90")} />
-                                </CollapsibleTrigger>
-                                <button
-                                  onClick={() => onEpubNavigate?.(tocItem.href)}
-                                  className={cn(
-                                    'flex-1 text-left py-1.5 pr-3 rounded-md transition-colors text-sm truncate',
-                                    isCurrent ? 'text-primary font-semibold' : 'text-foreground hover:text-primary'
-                                  )}
-                                >
-                                  {tocItem.label}
-                                </button>
-                              </div>
-                              <CollapsibleContent>
-                                <div className="ml-4 border-l-2 border-border/60 pl-2 space-y-0.5">
-                                  {tocItem.subitems.map(sub => {
-                                    const isSubCurrent = epubCurrentHref ? epubCurrentHref.includes(sub.href) : false;
-                                    return (
-                                      <button
-                                        key={sub.id}
-                                        onClick={() => onEpubNavigate?.(sub.href)}
-                                        className={cn(
-                                          'w-full text-left px-2 py-1 rounded-md text-xs transition-colors',
-                                          isSubCurrent ? 'text-primary font-semibold bg-primary/5' : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
-                                        )}
-                                      >
-                                        <span className="truncate">{sub.label}</span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </CollapsibleContent>
-                            </Collapsible>
-                          ) : (
-                            <button
-                              onClick={() => onEpubNavigate?.(tocItem.href)}
-                              className={cn(
-                                'w-full text-left flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors text-sm',
-                                isCurrent ? 'text-primary font-semibold bg-primary/5' : 'text-foreground hover:bg-muted/50'
-                              )}
-                            >
-                              <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', isCurrent ? 'bg-primary' : 'bg-muted-foreground/40')} />
-                              <span className="truncate">{tocItem.label}</span>
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <div className="pb-2 space-y-0.5">{(epubToc || []).map((tocItem) => renderEpubItem(tocItem))}</div>
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
+          ) : isPdfMode ? (
+            <div className="pb-1">
+              <Collapsible open={expandedSections.has('contents')} onOpenChange={() => toggleSection('contents')}>
+                <CollapsibleTrigger className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold uppercase tracking-wider text-primary hover:text-primary/80 transition-colors">
+                  <span>Contents</span>
+                  <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", !expandedSections.has('contents') && "-rotate-90")} />
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="pb-2 space-y-0.5">{(pdfToc || []).map((tocItem) => renderPdfItem(tocItem))}</div>
                 </CollapsibleContent>
               </Collapsible>
             </div>

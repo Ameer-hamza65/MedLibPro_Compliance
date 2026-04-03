@@ -27,12 +27,180 @@ interface UseEpubReaderOptions {
 }
 
 function flattenToc(items: NavItem[]): EpubTocItem[] {
-  return items.map(item => ({
+  return items.map((item) => ({
     id: item.id || item.href,
     href: item.href,
     label: item.label?.trim() || 'Untitled',
     subitems: item.subitems ? flattenToc(item.subitems) : [],
   }));
+}
+
+function flattenEpubTocItems(items: EpubTocItem[]): EpubTocItem[] {
+  return items.flatMap((item) => [item, ...flattenEpubTocItems(item.subitems)]);
+}
+
+function safeDecodeHref(href: string): string {
+  try {
+    return decodeURIComponent(href);
+  } catch {
+    return href;
+  }
+}
+
+function splitNormalizedHref(href: string) {
+  const normalized = safeDecodeHref(href || '')
+    .replace(/^\/+/, '')
+    .replace(/^\.\//, '')
+    .trim();
+  const [path = '', fragment = ''] = normalized.split('#');
+  return {
+    path: path.toLowerCase(),
+    fragment: fragment.toLowerCase(),
+    full: `${path.toLowerCase()}#${fragment.toLowerCase()}`,
+  };
+}
+
+function extractVisibleText(rendition: Rendition): string {
+  try {
+    const contents = rendition.getContents() as unknown as any[];
+    return contents
+      .map((content) => content?.document?.body?.innerText || '')
+      .join('\n\n')
+      .trim();
+  } catch {
+    return '';
+  }
+}
+
+function resolveActiveHref(
+  rendition: Rendition,
+  tocItems: EpubTocItem[],
+  containerId: string,
+  fallbackHref: string,
+): string {
+  const flattened = flattenEpubTocItems(tocItems);
+  if (!flattened.length) return fallbackHref;
+
+  const fallbackParts = splitNormalizedHref(fallbackHref);
+  const container = document.getElementById(containerId);
+  const containerRect = container?.getBoundingClientRect();
+  const focusLine = containerRect
+    ? containerRect.top + Math.min(containerRect.height * 0.22, 160)
+    : 160;
+
+  let bestAbove: { href: string; top: number } | null = null;
+  let bestBelow: { href: string; top: number } | null = null;
+
+  try {
+    const contents = rendition.getContents() as unknown as any[];
+    for (const content of contents) {
+      const doc = content?.document as Document | undefined;
+      const frame = doc?.defaultView?.frameElement as HTMLElement | null;
+      if (!doc || !frame) continue;
+
+      const frameRect = frame.getBoundingClientRect();
+      const contentParts = splitNormalizedHref(content?.section?.href || fallbackHref);
+      const contentPath = contentParts.path || fallbackParts.path;
+      const contentTocItems = flattened.filter((item) => {
+        const itemParts = splitNormalizedHref(item.href);
+        return itemParts.path === contentPath && itemParts.fragment;
+      });
+
+      if (!contentTocItems.length) continue;
+
+      const hrefByFragment = new Map(
+        contentTocItems.map((item) => [splitNormalizedHref(item.href).fragment, item.href]),
+      );
+
+      const elements = Array.from(doc.querySelectorAll('[id]')) as HTMLElement[];
+      for (const element of elements) {
+        const fragment = (element.id || '').trim().toLowerCase();
+        const href = hrefByFragment.get(fragment);
+        if (!fragment || !href) continue;
+
+        const rect = element.getBoundingClientRect();
+        const absoluteTop = frameRect.top + rect.top;
+
+        if (absoluteTop <= focusLine + 8) {
+          if (!bestAbove || absoluteTop > bestAbove.top) {
+            bestAbove = { href, top: absoluteTop };
+          }
+        } else if (!bestBelow || absoluteTop < bestBelow.top) {
+          bestBelow = { href, top: absoluteTop };
+        }
+      }
+    }
+  } catch {
+    // fall through to path-based matching
+  }
+
+  if (bestAbove) return bestAbove.href;
+  if (bestBelow) return bestBelow.href;
+
+  const exactMatch = flattened.find((item) => splitNormalizedHref(item.href).full === fallbackParts.full);
+  if (exactMatch) return exactMatch.href;
+
+  const samePathItems = flattened.filter((item) => splitNormalizedHref(item.href).path === fallbackParts.path);
+  const sameFragmentItem = samePathItems.find((item) => splitNormalizedHref(item.href).fragment === fallbackParts.fragment);
+
+  return sameFragmentItem?.href || samePathItems[0]?.href || flattened[0]?.href || fallbackHref;
+}
+
+function findAnchorElement(doc: Document, fragment: string): HTMLElement | null {
+  const normalizedFragment = safeDecodeHref(fragment).trim();
+  if (!normalizedFragment) return doc.body as HTMLElement | null;
+
+  const directMatch = doc.getElementById(normalizedFragment)
+    || doc.querySelector(`[name="${CSS.escape(normalizedFragment)}"]`);
+  if (directMatch instanceof HTMLElement) return directMatch;
+
+  const lowered = normalizedFragment.toLowerCase();
+  const candidates = Array.from(doc.querySelectorAll<HTMLElement>('[id], [name]'));
+  return candidates.find((candidate) => {
+    const id = candidate.getAttribute('id')?.trim().toLowerCase();
+    const name = candidate.getAttribute('name')?.trim().toLowerCase();
+    return id === lowered || name === lowered;
+  }) || null;
+}
+
+function scrollToRenderedTarget(rendition: Rendition, containerId: string, href: string): boolean {
+  const container = document.getElementById(containerId);
+  if (!(container instanceof HTMLElement)) return false;
+
+  const target = splitNormalizedHref(href);
+  const contents = rendition.getContents() as unknown as any[];
+  const containerRect = container.getBoundingClientRect();
+
+  for (const content of contents) {
+    const doc = content?.document as Document | undefined;
+    const frame = doc?.defaultView?.frameElement as HTMLElement | null;
+    if (!doc || !frame) continue;
+
+    const sectionPath = splitNormalizedHref(content?.section?.href || href).path;
+    if (target.path && sectionPath && sectionPath !== target.path) continue;
+
+    const frameRect = frame.getBoundingClientRect();
+
+    if (!target.fragment) {
+      const nextTop = container.scrollTop + (frameRect.top - containerRect.top) - 16;
+      container.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
+      return true;
+    }
+
+    const anchor = findAnchorElement(doc, target.fragment);
+    if (!anchor) continue;
+
+    const anchorRect = anchor.getBoundingClientRect();
+    const nextTop = container.scrollTop
+      + (frameRect.top - containerRect.top)
+      + anchorRect.top
+      - 24;
+
+    container.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
+    return true;
+  }
+
+  return false;
 }
 
 export function useEpubReader(options: UseEpubReaderOptions) {
@@ -46,6 +214,7 @@ export function useEpubReader(options: UseEpubReaderOptions) {
 
   const bookRef = useRef<Book | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
+  const lastLocationHrefRef = useRef('');
   const [toc, setToc] = useState<EpubTocItem[]>([]);
   const [isReady, setIsReady] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -55,19 +224,21 @@ export function useEpubReader(options: UseEpubReaderOptions) {
   const [visibleText, setVisibleText] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
-  // Load the EPUB
   useEffect(() => {
     let destroyed = false;
+    let relocatedTimer: ReturnType<typeof setTimeout> | null = null;
+    let scrollSyncTimer: ReturnType<typeof setTimeout> | null = null;
+    let containerEl: HTMLElement | null = null;
+    let handleContainerScroll: (() => void) | null = null;
+
     setIsLoading(true);
     setError(null);
     setIsReady(false);
 
     async function loadEpub() {
       try {
-        // Get authenticated access to the private bucket
         const { data: sessionData } = await supabase.auth.getSession();
         const token = sessionData?.session?.access_token;
-
         const url = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/authenticated/book-files/${filePath}`;
 
         const response = await fetch(url, {
@@ -76,7 +247,6 @@ export function useEpubReader(options: UseEpubReaderOptions) {
 
         if (!response.ok) throw new Error(`Failed to fetch EPUB: ${response.status}`);
         const arrayBuffer = await response.arrayBuffer();
-
         if (destroyed) return;
 
         const book = ePub(arrayBuffer as any);
@@ -85,15 +255,12 @@ export function useEpubReader(options: UseEpubReaderOptions) {
         await book.ready;
         if (destroyed) return;
 
-        // Extract TOC
-        const nav = book.navigation;
-        setToc(flattenToc(nav.toc));
+        const tocItems = flattenToc(book.navigation.toc);
+        setToc(tocItems);
 
-        // Create rendition
         const container = document.getElementById(containerId);
-        if (!container) throw new Error('Container not found');
-
-        // Clear container
+        if (!(container instanceof HTMLElement)) throw new Error('Container not found');
+        containerEl = container;
         container.innerHTML = '';
 
         const rendition = book.renderTo(container, {
@@ -107,7 +274,27 @@ export function useEpubReader(options: UseEpubReaderOptions) {
 
         renditionRef.current = rendition;
 
-        // Apply initial theme
+        const syncViewState = (fallbackHref?: string) => {
+          if (scrollSyncTimer) clearTimeout(scrollSyncTimer);
+          scrollSyncTimer = setTimeout(() => {
+            if (destroyed || !renditionRef.current) return;
+            const nextVisibleText = extractVisibleText(renditionRef.current);
+            if (nextVisibleText) setVisibleText(nextVisibleText);
+
+            const resolvedHref = resolveActiveHref(
+              renditionRef.current,
+              tocItems,
+              containerId,
+              fallbackHref || lastLocationHrefRef.current || tocItems[0]?.href || '',
+            );
+
+            if (resolvedHref) {
+              lastLocationHrefRef.current = resolvedHref;
+              setCurrentHref((prev) => (prev === resolvedHref ? prev : resolvedHref));
+            }
+          }, 80);
+        };
+
         rendition.themes.default({
           'body': {
             'font-size': `${fontSize}px !important`,
@@ -141,32 +328,19 @@ export function useEpubReader(options: UseEpubReaderOptions) {
           },
         });
 
-        // Listen for location changes (debounced to prevent scroll fighting)
-        let relocatedTimer: ReturnType<typeof setTimeout> | null = null;
         rendition.on('relocated', (location: any) => {
           if (destroyed) return;
           setCurrentLocation(location);
           if (location?.start?.href) {
+            lastLocationHrefRef.current = location.start.href;
             setCurrentHref(location.start.href);
           }
-          // Debounce visible text extraction
           if (relocatedTimer) clearTimeout(relocatedTimer);
           relocatedTimer = setTimeout(() => {
-            try {
-              const contents = rendition.getContents();
-              if (contents && (contents as any).length > 0) {
-                const doc = (contents as any)[0]?.document;
-                if (doc?.body) {
-                  setVisibleText(doc.body.innerText || '');
-                }
-              }
-            } catch {
-              // ignore
-            }
-          }, 300);
+            syncViewState(location?.start?.href);
+          }, 60);
         });
 
-        // Listen for text selection
         rendition.on('selected', (cfiRange: string, contents: any) => {
           if (destroyed) return;
           try {
@@ -180,10 +354,15 @@ export function useEpubReader(options: UseEpubReaderOptions) {
           }
         });
 
-        // Display first page
+        handleContainerScroll = () => {
+          syncViewState(lastLocationHrefRef.current);
+        };
+        container.addEventListener('scroll', handleContainerScroll, { passive: true });
+
         await rendition.display();
         if (destroyed) return;
 
+        syncViewState(lastLocationHrefRef.current || tocItems[0]?.href || '');
         setIsReady(true);
         setIsLoading(false);
       } catch (err: any) {
@@ -198,6 +377,11 @@ export function useEpubReader(options: UseEpubReaderOptions) {
 
     return () => {
       destroyed = true;
+      if (relocatedTimer) clearTimeout(relocatedTimer);
+      if (scrollSyncTimer) clearTimeout(scrollSyncTimer);
+      if (containerEl && handleContainerScroll) {
+        containerEl.removeEventListener('scroll', handleContainerScroll);
+      }
       if (renditionRef.current) {
         try { renditionRef.current.destroy(); } catch {}
         renditionRef.current = null;
@@ -207,9 +391,8 @@ export function useEpubReader(options: UseEpubReaderOptions) {
         bookRef.current = null;
       }
     };
-  }, [filePath, containerId, fontSize, lineHeight, fontFamily, theme]);
+  }, [filePath, containerId, fontSize, lineHeight, fontFamily, theme, focusMode, fontFamilyCSS, isDark]);
 
-  // Update theme/font when prefs change
   useEffect(() => {
     if (!renditionRef.current || !isReady) return;
     renditionRef.current.themes.default({
@@ -221,7 +404,6 @@ export function useEpubReader(options: UseEpubReaderOptions) {
         'background': 'transparent !important',
       },
     });
-    // Force re-render
     try {
       const loc = renditionRef.current.location;
       if (loc?.start?.cfi) {
@@ -232,8 +414,26 @@ export function useEpubReader(options: UseEpubReaderOptions) {
 
   const goToChapter = useCallback((href: string) => {
     if (!renditionRef.current) return;
-    renditionRef.current.display(href);
-  }, []);
+
+    const rendition = renditionRef.current;
+    const targetHref = safeDecodeHref(href);
+
+    lastLocationHrefRef.current = targetHref;
+    setCurrentHref(targetHref);
+
+    void rendition.display(targetHref).then(() => {
+      const attemptScroll = (attempt = 0) => {
+        if (scrollToRenderedTarget(rendition, containerId, targetHref)) return;
+        if (attempt < 5) {
+          window.setTimeout(() => attemptScroll(attempt + 1), 120);
+        }
+      };
+
+      window.requestAnimationFrame(() => attemptScroll());
+    }).catch(() => {
+      // ignore display errors here; load effect handles surfaced errors
+    });
+  }, [containerId]);
 
   const goNext = useCallback(() => {
     if (!renditionRef.current) return;

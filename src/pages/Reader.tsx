@@ -8,6 +8,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { ContentRenderer } from '@/components/reader/ContentRenderer';
 import { EpubReader } from '@/components/reader/EpubReader';
+import { PdfReader } from '@/components/reader/PdfReader';
+import type { PdfTocItem } from '@/hooks/usePdfReader';
 import { BookInfoPage } from '@/components/reader/BookInfoPage';
 import { AIPanel } from '@/components/reader/AIPanel';
 import { AnalyticsPanel } from '@/components/reader/AnalyticsPanel';
@@ -37,6 +39,53 @@ function getPreferredEpubHref(items: EpubTocItem[]): string {
   return preferred?.href || flattened[0]?.href || '';
 }
 
+function safeDecodeHref(href: string): string {
+  try {
+    return decodeURIComponent(href);
+  } catch {
+    return href;
+  }
+}
+
+function normalizeEpubHref(href: string) {
+  const decoded = safeDecodeHref(href || '').replace(/^\/+/, '').replace(/^\.\//, '').trim();
+  const [path = '', fragment = ''] = decoded.split('#');
+  return {
+    path: path.toLowerCase(),
+    fragment: fragment.toLowerCase(),
+    full: `${path.toLowerCase()}#${fragment.toLowerCase()}`,
+  };
+}
+
+function findMatchingEpubTocItem(items: EpubTocItem[], targetHref: string): EpubTocItem | undefined {
+  const flattened = flattenEpubToc(items);
+  const target = normalizeEpubHref(targetHref);
+  const exact = flattened.find((item) => normalizeEpubHref(item.href).full === target.full);
+  if (exact) return exact;
+
+  const samePathItems = flattened.filter((item) => normalizeEpubHref(item.href).path === target.path);
+  return samePathItems
+    .filter((item) => {
+      const fragment = normalizeEpubHref(item.href).fragment;
+      return !fragment || fragment === target.fragment || target.fragment.startsWith(fragment);
+    })
+    .sort((a, b) => normalizeEpubHref(b.href).fragment.length - normalizeEpubHref(a.href).fragment.length)[0] || samePathItems[0];
+}
+
+function flattenPdfToc(items: PdfTocItem[]): PdfTocItem[] {
+  return items.flatMap((item) => [item, ...flattenPdfToc(item.subitems)]);
+}
+
+function findMatchingPdfTocItem(items: PdfTocItem[], currentPage: number): PdfTocItem | undefined {
+  const flattened = flattenPdfToc(items).sort((a, b) => a.pageNumber - b.pageNumber);
+  let active = flattened[0];
+  for (const item of flattened) {
+    if (item.pageNumber <= currentPage) active = item;
+    else break;
+  }
+  return active;
+}
+
 export default function Reader() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -56,18 +105,33 @@ export default function Reader() {
     }
     return decodeURIComponent(chapterId);
   }, [chapterId, isBookInfoPage, isAutoOpenFirstChapter, isFindByTitle]);
+  const pdfTargetPage = useMemo(() => {
+    if (!chapterId || isBookInfoPage || isAutoOpenFirstChapter || isFindByTitle) return undefined;
+    if (!chapterId.startsWith('pdf:')) return undefined;
+    const decodedValue = decodeURIComponent(chapterId.slice(4));
+    const [pagePart, offsetPart] = decodedValue.split('@');
+    const parsedPage = Number.parseInt(pagePart, 10);
+    const parsedOffset = offsetPart ? Number.parseFloat(offsetPart) : undefined;
+    if (!Number.isFinite(parsedPage) || parsedPage <= 0) return undefined;
+    return {
+      pageNumber: parsedPage,
+      topOffset: Number.isFinite(parsedOffset) ? parsedOffset : undefined,
+    };
+  }, [chapterId, isBookInfoPage, isAutoOpenFirstChapter, isFindByTitle]);
 
   const book = useMemo(
     () => books.find((b) => b.id === bookId),
     [books, bookId],
   );
 
-  // Determine if this book should use EPUB.js (has a file in storage)
+  // Determine if this book should use EPUB.js or PDF.js (has a file in storage)
   const useEpubJs = !!(book?.filePath && book.fileType === 'epub');
+  const usePdfJs = !!(book?.filePath && book.fileType === 'pdf');
+  const useNativeRenderer = useEpubJs || usePdfJs;
 
   const chapter = useMemo(() => {
     if (!book || !book.tableOfContents || book.tableOfContents.length === 0) {
-      if (useEpubJs && !isBookInfoPage) {
+      if (useNativeRenderer && !isBookInfoPage) {
         return {
           id: chapterId || 'epub-chapter',
           title: chapterTitleParam || 'Chapter',
@@ -93,17 +157,17 @@ export default function Reader() {
     }
     if (chapterId) return book.tableOfContents.find(c => c.id === chapterId);
     return { id: '__book-info__', title: 'Book Information', content: '', pageNumber: 0, tags: [] } as Chapter;
-  }, [book, chapterId, isBookInfoPage, useEpubJs, isFindByTitle, chapterTitleParam]);
+  }, [book, chapterId, isBookInfoPage, useNativeRenderer, isFindByTitle, chapterTitleParam]);
 
   useEffect(() => {
-    if (book && !useEpubJs && book.tableOfContents && book.tableOfContents.length > 0 && !chapterId && chapter) {
+    if (book && !useNativeRenderer && book.tableOfContents && book.tableOfContents.length > 0 && !chapterId && chapter) {
       navigate(`/reader?book=${bookId}&chapter=__book-info__`, { replace: true });
     }
-    // For EPUB.js books without a chapter param, go to book info
-    if (book && useEpubJs && !chapterId) {
+    // For native renderer books without a chapter param, go to book info
+    if (book && useNativeRenderer && !chapterId) {
       navigate(`/reader?book=${bookId}&chapter=__book-info__`, { replace: true });
     }
-  }, [book, bookId, chapterId, chapter, navigate, useEpubJs]);
+  }, [book, bookId, chapterId, chapter, navigate, useNativeRenderer]);
 
   useEffect(() => {
     const viewport = document.querySelector('[data-radix-scroll-area-viewport]');
@@ -130,6 +194,21 @@ export default function Reader() {
   const [epubToc, setEpubToc] = useState<EpubTocItem[]>([]);
   const [epubVisibleText, setEpubVisibleText] = useState<string>('');
   const [epubCurrentHref, setEpubCurrentHref] = useState<string>('');
+
+  // PDF.js specific state
+  const [pdfToc, setPdfToc] = useState<PdfTocItem[]>([]);
+  const [pdfVisibleText, setPdfVisibleText] = useState<string>('');
+  const [pdfCurrentPage, setPdfCurrentPage] = useState<number>(1);
+
+  const activeEpubTocItem = useMemo(
+    () => (useEpubJs ? findMatchingEpubTocItem(epubToc, epubCurrentHref || epubChapterHref) : undefined),
+    [useEpubJs, epubToc, epubCurrentHref, epubChapterHref],
+  );
+
+  const activePdfTocItem = useMemo(
+    () => (usePdfJs ? findMatchingPdfTocItem(pdfToc, pdfCurrentPage) : undefined),
+    [usePdfJs, pdfToc, pdfCurrentPage],
+  );
 
   // When navigating from search results by chapter title, find matching TOC entry
   const findByTitleDone = useRef(false);
@@ -166,23 +245,23 @@ export default function Reader() {
   } = useAnnotations(bookId, chapterId);
 
   const chunks = useMemo(() => {
-    if (useEpubJs) return []; // Not needed for EPUB.js mode
+    if (useNativeRenderer) return []; // Not needed for native renderer mode
     if (!chapter) return [];
     if (!chapter.content || chapter.content.trim().length === 0) return [];
     return chunkChapterContent(chapter.id, chapter.content, chapter.title, chapter.category);
-  }, [chapter, useEpubJs]);
+  }, [chapter, useNativeRenderer]);
 
   const redirected = useRef(false);
   useEffect(() => {
     if (redirected.current) return;
     if (!book) { redirected.current = true; navigate('/library'); return; }
-    if (!useEpubJs && !chapter) {
+    if (!useNativeRenderer && !chapter) {
       if (book.tableOfContents.length === 0) return;
       redirected.current = true;
       navigate('/library');
       return;
     }
-  }, [book, chapter, bookId, navigate, useEpubJs]);
+  }, [book, chapter, bookId, navigate, useNativeRenderer]);
 
   // Track scroll progress
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
@@ -219,6 +298,18 @@ export default function Reader() {
   const handleEpubAnnotate = useCallback((text: string, note: string, cfi: string) => {
     addAnnotation(text, note, 0);
     trackEvent('annotation', { text: text.slice(0, 50), cfi });
+  }, [addAnnotation, trackEvent]);
+
+  // PDF.js highlight handler
+  const handlePdfHighlight = useCallback((text: string, page: number) => {
+    addHighlight(text, 0);
+    trackEvent('highlight', { text: text.slice(0, 50), page });
+  }, [addHighlight, trackEvent]);
+
+  // PDF.js annotate handler
+  const handlePdfAnnotate = useCallback((text: string, note: string, page: number) => {
+    addAnnotation(text, note, 0);
+    trackEvent('annotation', { text: text.slice(0, 50), page });
   }, [addAnnotation, trackEvent]);
 
   const handleToggleBookmark = useCallback(() => {
@@ -281,12 +372,12 @@ export default function Reader() {
     setSidebarAILoading(true);
     setSidebarAIAnswer(undefined);
     try {
-      const contextText = useEpubJs ? epubVisibleText : (chapter?.content || '');
+      const contextText = useEpubJs ? epubVisibleText : usePdfJs ? pdfVisibleText : (chapter?.content || '');
       const { data, error } = await supabase.functions.invoke('gemini-ai', {
         body: {
           prompt: question,
           chapterContent: contextText.slice(0, 15000),
-          chapterTitle: useEpubJs ? (epubToc.find(t => epubCurrentHref.includes(t.href))?.label || 'Chapter') : (chapter?.title || ''),
+          chapterTitle: useEpubJs ? (epubToc.find(t => epubCurrentHref.includes(t.href))?.label || 'Chapter') : usePdfJs ? `Page ${pdfCurrentPage}` : (chapter?.title || ''),
           bookTitle: book?.title || '',
           type: 'qa',
           bookId: book?.id || '',
@@ -301,7 +392,7 @@ export default function Reader() {
       setSidebarAILoading(false);
       trackEvent('ai_query');
     }
-  }, [useEpubJs, epubVisibleText, epubToc, epubCurrentHref, chapter, book, trackEvent]);
+  }, [useEpubJs, usePdfJs, epubVisibleText, pdfVisibleText, pdfCurrentPage, epubToc, epubCurrentHref, chapter, book, trackEvent]);
 
   // Scroll to top of reader content
   const handleScrollToTop = useCallback(() => {
@@ -331,8 +422,16 @@ export default function Reader() {
     setEpubCurrentHref(href);
   }, [book, navigate]);
 
-  if (!book) return null;
-  if (!chapter && !useEpubJs) {
+  const handlePdfTocNavigate = useCallback((item: PdfTocItem) => {
+    if (!book) return;
+    const chapterValue = item.topOffset != null
+      ? `pdf:${item.pageNumber}@${item.topOffset}`
+      : `pdf:${item.pageNumber}`;
+    navigate(`/reader?book=${book.id}&chapter=${encodeURIComponent(chapterValue)}`);
+    setPdfCurrentPage(item.pageNumber);
+  }, [book, navigate]);
+
+  if (!chapter && !useNativeRenderer) {
     return (
       <div className="h-[calc(100vh-64px)] flex items-center justify-center bg-background">
         <div className="text-center">
@@ -351,9 +450,13 @@ export default function Reader() {
 
   const contentStyles = getContentStyles(prefs);
 
-  // Get the chapter content for AI — either from chapter DB content or EPUB.js visible text
-  const aiChapterContent = useEpubJs ? epubVisibleText : (chapter?.content || '');
-  const aiChapterTitle = useEpubJs ? (epubToc.find(t => epubCurrentHref.includes(t.href))?.label || chapter?.title || 'Chapter') : (chapter?.title || '');
+  // Get the chapter content for AI — either from native renderer visible text or DB content
+  const aiChapterContent = useEpubJs ? epubVisibleText : usePdfJs ? pdfVisibleText : (chapter?.content || '');
+  const aiChapterTitle = useEpubJs
+    ? (activeEpubTocItem?.label || chapter?.title || 'Chapter')
+    : usePdfJs
+    ? (activePdfTocItem?.label || `Page ${pdfCurrentPage}`)
+    : (chapter?.title || '');
 
   // EPUB.js content area — always mount when useEpubJs so TOC loads
   // Use opacity+pointer-events instead of display:none so container has dimensions
@@ -381,6 +484,28 @@ export default function Reader() {
     </div>
   ) : null;
 
+  // PDF.js content area
+  const pdfContentAreaJsx = usePdfJs ? (
+    <div
+      className={cn("h-full", isBookInfoPage && "absolute inset-0 opacity-0 pointer-events-none -z-10")}
+      style={isBookInfoPage ? { position: 'absolute', width: '100%', height: '100%' } : undefined}
+    >
+      <PdfReader
+        filePath={book.filePath!}
+        bookId={book.id}
+        fontSize={prefs.fontSize}
+        theme={prefs.theme}
+        navigateToPage={pdfTargetPage}
+        onTocLoaded={setPdfToc}
+        onPageChange={setPdfCurrentPage}
+        onVisibleTextChange={setPdfVisibleText}
+        onHighlight={handlePdfHighlight}
+        onAnnotate={handlePdfAnnotate}
+        highlightColor={activeHighlightColor}
+      />
+    </div>
+  ) : null;
+
   // Legacy content area (server-parsed HTML)
   const legacyContentAreaJsx = (
     <ScrollArea className={cn('h-full', contentStyles.className)} onScrollCapture={handleScroll as any}>
@@ -402,7 +527,7 @@ export default function Reader() {
         )}
 
         {isBookInfoPage ? (
-          <BookInfoPage book={book} epubTocCount={useEpubJs ? epubToc.length : undefined} />
+          <BookInfoPage book={book} epubTocCount={useNativeRenderer ? (useEpubJs ? epubToc.length : pdfToc.length || undefined) : undefined} />
         ) : (
           <>
             {chapter?.tags && chapter.tags.length > 0 && (
@@ -473,13 +598,20 @@ export default function Reader() {
         {epubContentAreaJsx}
       </div>
     )
+    : usePdfJs
+    ? (
+      <div className="relative h-full">
+        {isBookInfoPage && legacyContentAreaJsx}
+        {pdfContentAreaJsx}
+      </div>
+    )
     : legacyContentAreaJsx;
 
   return (
     <div className="h-[calc(100vh-64px)] flex flex-col bg-background">
       {/* Reading progress bar at very top */}
       <ReadingProgressBar
-        totalChapters={useEpubJs ? epubToc.length : book.tableOfContents.length}
+        totalChapters={useNativeRenderer ? (useEpubJs ? epubToc.length : pdfToc.length || 1) : book.tableOfContents.length}
         currentChapterIndex={currentIndex >= 0 ? currentIndex : 0}
         scrollProgress={scrollProgress}
       />
@@ -509,7 +641,7 @@ export default function Reader() {
 
         {/* Center: chapter title + page nav */}
         <div className="flex items-center gap-2 min-w-0 flex-1 justify-center">
-          {!useEpubJs && (
+          {!useNativeRenderer && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-8 w-8" disabled={!prevChapter} onClick={prevChapter ? () => handleNavigateChapter(prevChapter) : undefined}>
@@ -522,11 +654,13 @@ export default function Reader() {
           <div className="text-center min-w-0">
             <p className="text-sm font-semibold truncate">
               {useEpubJs && !isBookInfoPage
-                ? (epubToc.find(t => epubCurrentHref.includes(t.href) || epubChapterHref.includes(t.href))?.label || book.title)
+                ? (activeEpubTocItem?.label || book.title)
+                : usePdfJs && !isBookInfoPage
+                ? (activePdfTocItem?.label || `Page ${pdfCurrentPage}`)
                 : chapter?.title}
             </p>
           </div>
-          {!useEpubJs && (
+          {!useNativeRenderer && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-8 w-8" disabled={!nextChapter} onClick={nextChapter ? () => handleNavigateChapter(nextChapter) : undefined}>
@@ -536,8 +670,11 @@ export default function Reader() {
               <TooltipContent>Next Chapter</TooltipContent>
             </Tooltip>
           )}
-          {!useEpubJs && chapter && chapter.pageNumber > 0 && (
+          {!useNativeRenderer && chapter && chapter.pageNumber > 0 && (
             <Badge variant="secondary" className="text-xs flex-shrink-0">p.{chapter.pageNumber}</Badge>
+          )}
+          {usePdfJs && !isBookInfoPage && (
+            <Badge variant="secondary" className="text-xs flex-shrink-0">p.{pdfCurrentPage}</Badge>
           )}
         </div>
 
@@ -638,13 +775,16 @@ export default function Reader() {
           )}>
             <OutlineSidebar
               book={book}
-              currentChapterId={useEpubJs ? (chapterId || '__book-info__') : (chapter?.id || '')}
+              currentChapterId={useNativeRenderer ? (chapterId || '__book-info__') : (chapter?.id || '')}
               currentChapterContent={chapter?.content}
               onSelectChapter={handleNavigateChapter}
               onScrollToHeading={handleScrollToHeading}
               epubToc={useEpubJs ? epubToc : undefined}
               epubCurrentHref={useEpubJs ? epubCurrentHref : undefined}
               onEpubNavigate={useEpubJs ? handleEpubTocNavigate : undefined}
+              pdfToc={usePdfJs ? pdfToc : undefined}
+              pdfCurrentPage={usePdfJs ? pdfCurrentPage : undefined}
+              onPdfNavigate={usePdfJs ? handlePdfTocNavigate : undefined}
               onAIAsk={handleSidebarAIAsk}
               aiLoading={sidebarAILoading}
               aiLastAnswer={sidebarAIAnswer}
@@ -697,8 +837,8 @@ export default function Reader() {
                 <AnalyticsPanel
                   stats={stats}
                   formattedTime={formatTime(stats.totalTimeSeconds)}
-                  totalChunks={useEpubJs ? 1 : chunks.length}
-                  viewedChunks={useEpubJs ? 1 : viewedChunks.size}
+                  totalChunks={useNativeRenderer ? 1 : chunks.length}
+                  viewedChunks={useNativeRenderer ? 1 : viewedChunks.size}
                   bookTitle={book.title}
                   chapterTitle={chapter?.title || ''}
                 />
