@@ -194,11 +194,28 @@ export default function Reader() {
   const [epubToc, setEpubToc] = useState<EpubTocItem[]>([]);
   const [epubVisibleText, setEpubVisibleText] = useState<string>('');
   const [epubCurrentHref, setEpubCurrentHref] = useState<string>('');
+  const epubNavigationNonceRef = useRef(0);
+  const [epubNavigationRequest, setEpubNavigationRequest] = useState<{ href: string; nonce: number } | null>(null);
 
   // PDF.js specific state
   const [pdfToc, setPdfToc] = useState<PdfTocItem[]>([]);
   const [pdfVisibleText, setPdfVisibleText] = useState<string>('');
   const [pdfCurrentPage, setPdfCurrentPage] = useState<number>(1);
+
+  const requestEpubNavigation = useCallback((href: string) => {
+    if (!href) return;
+    epubNavigationNonceRef.current += 1;
+    setEpubNavigationRequest({ href, nonce: epubNavigationNonceRef.current });
+  }, []);
+
+  useEffect(() => {
+    if (!useEpubJs || !epubChapterHref) {
+      setEpubNavigationRequest(null);
+      return;
+    }
+
+    requestEpubNavigation(epubChapterHref);
+  }, [useEpubJs, epubChapterHref, requestEpubNavigation]);
 
   const activeEpubTocItem = useMemo(
     () => (useEpubJs ? findMatchingEpubTocItem(epubToc, epubCurrentHref || epubChapterHref) : undefined),
@@ -417,10 +434,11 @@ export default function Reader() {
 
   const handleEpubTocNavigate = useCallback((href: string) => {
     if (!book) return;
+    requestEpubNavigation(href);
     const encodedHref = encodeURIComponent(href);
     navigate(`/reader?book=${book.id}&chapter=epub:${encodedHref}`);
     setEpubCurrentHref(href);
-  }, [book, navigate]);
+  }, [book, navigate, requestEpubNavigation]);
 
   const handlePdfTocNavigate = useCallback((item: PdfTocItem) => {
     if (!book) return;
@@ -473,7 +491,8 @@ export default function Reader() {
         fontFamily={prefs.fontFamily}
         theme={prefs.theme}
         focusMode={prefs.focusMode}
-        navigateToHref={epubCurrentHref || epubChapterHref}
+        navigateToHref={epubNavigationRequest?.href || epubChapterHref}
+        navigateRequestKey={epubNavigationRequest?.nonce}
         onTocLoaded={setEpubToc}
         onChapterChange={setEpubCurrentHref}
         onVisibleTextChange={setEpubVisibleText}

@@ -15,6 +15,7 @@ interface EpubReaderProps {
   theme?: string;
   focusMode?: boolean;
   navigateToHref?: string;
+  navigateRequestKey?: number;
   onTocLoaded?: (toc: EpubTocItem[]) => void;
   onChapterChange?: (href: string) => void;
   onVisibleTextChange?: (text: string) => void;
@@ -33,6 +34,7 @@ export function EpubReader({
   theme = 'default',
   focusMode = false,
   navigateToHref,
+  navigateRequestKey,
   onTocLoaded,
   onChapterChange,
   onVisibleTextChange,
@@ -72,7 +74,7 @@ export function EpubReader({
     if (navigateToHref && isReady) {
       goToChapter(navigateToHref);
     }
-  }, [navigateToHref, isReady, goToChapter]);
+  }, [navigateToHref, navigateRequestKey, isReady, goToChapter]);
 
   // Notify parent of TOC
   useEffect(() => {

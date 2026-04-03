@@ -60,6 +60,29 @@ function splitNormalizedHref(href: string) {
   };
 }
 
+function isExternalHref(href: string): boolean {
+  return /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(href.trim());
+}
+
+function resolveRelativeHref(baseHref: string, href: string): string {
+  const normalizedHref = safeDecodeHref(href || '').trim();
+  if (!normalizedHref) return '';
+  if (isExternalHref(normalizedHref)) return normalizedHref;
+
+  if (normalizedHref.startsWith('#')) {
+    const { path } = splitNormalizedHref(baseHref);
+    return `${path}${normalizedHref}`;
+  }
+
+  try {
+    const { path } = splitNormalizedHref(baseHref);
+    const resolved = new URL(normalizedHref, `https://reader.local/${path || 'index.xhtml'}`);
+    return `${resolved.pathname.replace(/^\/+/, '')}${resolved.hash || ''}`;
+  } catch {
+    return normalizedHref.replace(/^\/+/, '').replace(/^\.\//, '');
+  }
+}
+
 function extractVisibleText(rendition: Rendition): string {
   try {
     const contents = rendition.getContents() as unknown as any[];
@@ -70,6 +93,15 @@ function extractVisibleText(rendition: Rendition): string {
   } catch {
     return '';
   }
+}
+
+function isPrimaryReaderClick(event: MouseEvent): boolean {
+  return !event.defaultPrevented
+    && event.button === 0
+    && !event.metaKey
+    && !event.ctrlKey
+    && !event.shiftKey
+    && !event.altKey;
 }
 
 function resolveActiveHref(
@@ -203,6 +235,40 @@ function scrollToRenderedTarget(rendition: Rendition, containerId: string, href:
   return false;
 }
 
+function navigateRenditionToHref(
+  rendition: Rendition,
+  containerId: string,
+  href: string,
+  currentSectionHref: string,
+  onNavigate?: (targetHref: string) => void,
+) {
+  const targetHref = safeDecodeHref(href);
+  const target = splitNormalizedHref(targetHref);
+  const current = splitNormalizedHref(currentSectionHref || targetHref);
+
+  onNavigate?.(targetHref);
+
+  const attemptScroll = (attempt = 0) => {
+    if (scrollToRenderedTarget(rendition, containerId, targetHref)) return;
+    if (attempt < 5) {
+      window.setTimeout(() => attemptScroll(attempt + 1), 120);
+    }
+  };
+
+  const sameSpineItem = target.path && current.path && target.path === current.path;
+
+  if (sameSpineItem) {
+    window.requestAnimationFrame(() => attemptScroll());
+    return;
+  }
+
+  void rendition.display(targetHref).then(() => {
+    window.requestAnimationFrame(() => attemptScroll());
+  }).catch(() => {
+    // ignore display errors here; load effect handles surfaced errors
+  });
+}
+
 export function useEpubReader(options: UseEpubReaderOptions) {
   const { filePath, containerId, fontSize = 18, lineHeight = 1.8, fontFamily = 'sans', theme = 'default', focusMode = false } = options;
   const isDark = theme === 'default';
@@ -273,6 +339,45 @@ export function useEpubReader(options: UseEpubReaderOptions) {
         });
 
         renditionRef.current = rendition;
+
+        rendition.hooks.content.register((contents: any) => {
+          const doc = contents?.document as Document | undefined;
+          if (!doc || doc.documentElement.dataset.medlibInternalNavBound === 'true') return;
+
+          doc.documentElement.dataset.medlibInternalNavBound = 'true';
+
+          doc.addEventListener('click', (event) => {
+            if (!isPrimaryReaderClick(event)) return;
+
+            const target = event.target;
+            if (!(target instanceof Element)) return;
+
+            const anchor = target.closest('a[href]') as HTMLAnchorElement | null;
+            const rawHref = anchor?.getAttribute('href')?.trim();
+            if (!anchor || !rawHref || isExternalHref(rawHref)) return;
+
+            const resolvedHref = resolveRelativeHref(
+              contents?.section?.href || lastLocationHrefRef.current || tocItems[0]?.href || '',
+              rawHref,
+            );
+            if (!resolvedHref) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+            (event as MouseEvent & { stopImmediatePropagation?: () => void }).stopImmediatePropagation?.();
+
+            navigateRenditionToHref(
+              rendition,
+              containerId,
+              resolvedHref,
+              contents?.section?.href || lastLocationHrefRef.current || '',
+              (nextHref) => {
+                lastLocationHrefRef.current = nextHref;
+                setCurrentHref(nextHref);
+              },
+            );
+          }, true);
+        });
 
         const syncViewState = (fallbackHref?: string) => {
           if (scrollSyncTimer) clearTimeout(scrollSyncTimer);
@@ -415,43 +520,16 @@ export function useEpubReader(options: UseEpubReaderOptions) {
   const goToChapter = useCallback((href: string) => {
     if (!renditionRef.current) return;
 
-    const rendition = renditionRef.current;
-    const targetHref = safeDecodeHref(href);
-
-    lastLocationHrefRef.current = targetHref;
-    setCurrentHref(targetHref);
-
-    const target = splitNormalizedHref(targetHref);
-    const currentSectionHref = (rendition as any).location?.start?.href || '';
-    const current = splitNormalizedHref(currentSectionHref);
-
-    // If navigating within the same spine item, just scroll — no need to reload
-    const sameSpineItem = target.path && current.path && target.path === current.path;
-
-    if (sameSpineItem && target.fragment) {
-      // Already on this spine item, just scroll to the anchor
-      const attemptScroll = (attempt = 0) => {
-        if (scrollToRenderedTarget(rendition, containerId, targetHref)) return;
-        if (attempt < 5) {
-          window.setTimeout(() => attemptScroll(attempt + 1), 120);
-        }
-      };
-      window.requestAnimationFrame(() => attemptScroll());
-      return;
-    }
-
-    void rendition.display(targetHref).then(() => {
-      const attemptScroll = (attempt = 0) => {
-        if (scrollToRenderedTarget(rendition, containerId, targetHref)) return;
-        if (attempt < 5) {
-          window.setTimeout(() => attemptScroll(attempt + 1), 120);
-        }
-      };
-
-      window.requestAnimationFrame(() => attemptScroll());
-    }).catch(() => {
-      // ignore display errors here; load effect handles surfaced errors
-    });
+    navigateRenditionToHref(
+      renditionRef.current,
+      containerId,
+      href,
+      (renditionRef.current as any).location?.start?.href || lastLocationHrefRef.current || '',
+      (targetHref) => {
+        lastLocationHrefRef.current = targetHref;
+        setCurrentHref(targetHref);
+      },
+    );
   }, [containerId]);
 
   const goNext = useCallback(() => {
