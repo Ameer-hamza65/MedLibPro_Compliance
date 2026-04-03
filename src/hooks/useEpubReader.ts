@@ -421,6 +421,25 @@ export function useEpubReader(options: UseEpubReaderOptions) {
     lastLocationHrefRef.current = targetHref;
     setCurrentHref(targetHref);
 
+    const target = splitNormalizedHref(targetHref);
+    const currentSectionHref = (rendition as any).location?.start?.href || '';
+    const current = splitNormalizedHref(currentSectionHref);
+
+    // If navigating within the same spine item, just scroll — no need to reload
+    const sameSpineItem = target.path && current.path && target.path === current.path;
+
+    if (sameSpineItem && target.fragment) {
+      // Already on this spine item, just scroll to the anchor
+      const attemptScroll = (attempt = 0) => {
+        if (scrollToRenderedTarget(rendition, containerId, targetHref)) return;
+        if (attempt < 5) {
+          window.setTimeout(() => attemptScroll(attempt + 1), 120);
+        }
+      };
+      window.requestAnimationFrame(() => attemptScroll());
+      return;
+    }
+
     void rendition.display(targetHref).then(() => {
       const attemptScroll = (attempt = 0) => {
         if (scrollToRenderedTarget(rendition, containerId, targetHref)) return;
