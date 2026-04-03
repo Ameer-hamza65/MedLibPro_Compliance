@@ -200,54 +200,57 @@ export function OutlineSidebar({
     setExpandedSections((prev) => new Set([...prev, 'contents', ...ancestorIds]));
   }, [activeEpubItem, activePdfItem, epubToc, pdfToc]);
 
+  // Debounced auto-scroll: only scroll sidebar after active item stabilizes for 300ms
+  const lastActiveIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!activeOutlineItemId) return;
+    // Skip if same item (no need to re-scroll)
+    if (lastActiveIdRef.current === activeOutlineItemId) return;
 
-    let retryTimer: number | null = null;
-    let attempts = 0;
+    // Debounce: wait 300ms for the active item to stabilize before scrolling
+    const debounceTimer = window.setTimeout(() => {
+      lastActiveIdRef.current = activeOutlineItemId;
 
-    const scrollActiveItemIntoView = () => {
-      const root = outlineScrollRootRef.current;
-      const viewport = root?.querySelector<HTMLElement>('[data-radix-scroll-area-viewport]');
-      const target = root?.querySelector<HTMLElement>(`[data-outline-item-id="${CSS.escape(activeOutlineItemId)}"]`);
+      let attempts = 0;
+      const tryScroll = () => {
+        const root = outlineScrollRootRef.current;
+        const viewport = root?.querySelector<HTMLElement>('[data-radix-scroll-area-viewport]');
+        const target = root?.querySelector<HTMLElement>(`[data-outline-item-id="${CSS.escape(activeOutlineItemId)}"]`);
 
-      if (!viewport || !target) {
-        if (attempts < 5) {
-          attempts += 1;
-          retryTimer = window.setTimeout(scrollActiveItemIntoView, 120);
+        if (!viewport || !target) {
+          if (attempts < 4) {
+            attempts += 1;
+            window.setTimeout(tryScroll, 150);
+          }
+          return;
         }
-        return;
-      }
 
-      const viewportRect = viewport.getBoundingClientRect();
-      const targetRect = target.getBoundingClientRect();
-      const padding = 16;
-      const targetTop = targetRect.top - viewportRect.top + viewport.scrollTop;
-      const targetBottom = targetTop + targetRect.height;
-      const visibleTop = viewport.scrollTop;
-      const visibleBottom = visibleTop + viewport.clientHeight;
-      const isAboveViewport = targetTop < visibleTop + padding;
-      const isBelowViewport = targetBottom > visibleBottom - padding;
+        const viewportRect = viewport.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const padding = 24;
+        const targetTop = targetRect.top - viewportRect.top + viewport.scrollTop;
+        const targetBottom = targetTop + targetRect.height;
+        const visibleTop = viewport.scrollTop;
+        const visibleBottom = visibleTop + viewport.clientHeight;
 
-      viewport.scrollLeft = 0;
+        viewport.scrollLeft = 0;
 
-      if (isAboveViewport) {
-        viewport.scrollTo({ top: Math.max(targetTop - padding, 0), behavior: 'smooth' });
-      } else if (isBelowViewport) {
-        viewport.scrollTo({
-          top: Math.max(targetBottom - viewport.clientHeight + padding, 0),
-          behavior: 'smooth',
-        });
-      }
-    };
+        if (targetTop < visibleTop + padding) {
+          viewport.scrollTo({ top: Math.max(targetTop - padding, 0), behavior: 'smooth' });
+        } else if (targetBottom > visibleBottom - padding) {
+          viewport.scrollTo({
+            top: Math.max(targetBottom - viewport.clientHeight + padding, 0),
+            behavior: 'smooth',
+          });
+        }
+      };
 
-    const frame = window.requestAnimationFrame(scrollActiveItemIntoView);
+      tryScroll();
+    }, 300);
 
-    return () => {
-      window.cancelAnimationFrame(frame);
-      if (retryTimer) window.clearTimeout(retryTimer);
-    };
-  }, [activeOutlineItemId, expandedSections]);
+    return () => window.clearTimeout(debounceTimer);
+  }, [activeOutlineItemId]);
 
   const handleOpenAll = useCallback(() => {
     setExpandedSections(new Set(allSectionIds));
