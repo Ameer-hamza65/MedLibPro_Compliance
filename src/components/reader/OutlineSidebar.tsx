@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { ChevronDown, ChevronRight, BookOpen } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -143,6 +143,7 @@ export function OutlineSidebar({
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['contents']));
   const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set([currentChapterId]));
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
+  const outlineScrollRootRef = useRef<HTMLDivElement>(null);
 
   const activeEpubItem = useMemo(
     () => (isEpubMode ? findActiveEpubItem(epubToc || [], epubCurrentHref) : null),
@@ -153,6 +154,8 @@ export function OutlineSidebar({
     () => (isPdfMode ? findActivePdfItem(pdfToc || [], pdfCurrentPage) : null),
     [isPdfMode, pdfToc, pdfCurrentPage]
   );
+
+  const activeOutlineItemId = activeEpubItem?.id || activePdfItem?.id || null;
 
   const currentHeadings = useMemo(
     () => extractHeadings(currentChapterContent || ''),
@@ -196,6 +199,44 @@ export function OutlineSidebar({
 
     setExpandedSections((prev) => new Set([...prev, 'contents', ...ancestorIds]));
   }, [activeEpubItem, activePdfItem, epubToc, pdfToc]);
+
+  useEffect(() => {
+    if (!activeOutlineItemId) return;
+
+    let retryTimer: number | null = null;
+    let attempts = 0;
+
+    const scrollActiveItemIntoView = () => {
+      const root = outlineScrollRootRef.current;
+      const viewport = root?.querySelector<HTMLElement>('[data-radix-scroll-area-viewport]');
+      const target = root?.querySelector<HTMLElement>(`[data-outline-item-id="${CSS.escape(activeOutlineItemId)}"]`);
+
+      if (!viewport || !target) {
+        if (attempts < 5) {
+          attempts += 1;
+          retryTimer = window.setTimeout(scrollActiveItemIntoView, 120);
+        }
+        return;
+      }
+
+      const viewportRect = viewport.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const padding = 16;
+      const isAboveViewport = targetRect.top < viewportRect.top + padding;
+      const isBelowViewport = targetRect.bottom > viewportRect.bottom - padding;
+
+      if (isAboveViewport || isBelowViewport) {
+        target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      }
+    };
+
+    const frame = window.requestAnimationFrame(scrollActiveItemIntoView);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (retryTimer) window.clearTimeout(retryTimer);
+    };
+  }, [activeOutlineItemId, expandedSections]);
 
   const handleOpenAll = useCallback(() => {
     setExpandedSections(new Set(allSectionIds));
@@ -325,6 +366,7 @@ export function OutlineSidebar({
           <button
             type="button"
             onClick={() => onEpubNavigate?.(item.href)}
+            data-outline-item-id={item.id}
             className={cn(
               'flex-1 min-w-0 rounded-md px-3 py-1.5 text-left text-sm transition-colors',
               isCurrent
@@ -346,7 +388,7 @@ export function OutlineSidebar({
         )}
       </div>
     );
-  }, [activeEpubItem?.id, expandedSections, onEpubNavigate]);
+  }, [activeEpubItem?.id, expandedSections, onEpubNavigate, toggleSection]);
 
   const renderPdfItem = useCallback((item: PdfTocItem, depth = 0) => {
     const isCurrent = activePdfItem?.id === item.id;
@@ -373,6 +415,7 @@ export function OutlineSidebar({
           <button
             type="button"
             onClick={() => onPdfNavigate?.(item)}
+            data-outline-item-id={item.id}
             className={cn(
               'flex-1 min-w-0 rounded-md px-3 py-1.5 text-left text-sm transition-colors',
               isCurrent
@@ -397,10 +440,10 @@ export function OutlineSidebar({
         )}
       </div>
     );
-  }, [activePdfItem?.id, expandedSections, onPdfNavigate]);
+  }, [activePdfItem?.id, expandedSections, onPdfNavigate, toggleSection]);
 
   return (
-    <div className="flex flex-col h-full bg-card border-r border-border/50">
+    <div ref={outlineScrollRootRef} className="flex flex-col h-full bg-card border-r border-border/50">
       {/* Book header */}
       <div className="px-4 py-3 border-b border-border/50 flex-shrink-0">
         <div className="flex items-center gap-2.5">
@@ -494,3 +537,4 @@ export function OutlineSidebar({
     </div>
   );
 }
+
