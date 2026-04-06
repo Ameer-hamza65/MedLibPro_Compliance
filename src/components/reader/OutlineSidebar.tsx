@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import { ChevronDown, ChevronRight, BookOpen } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -20,7 +20,6 @@ interface OutlineSidebarProps {
   pdfToc?: PdfTocItem[];
   pdfCurrentPage?: number;
   onPdfNavigate?: (item: PdfTocItem) => void;
-  // AI sidebar
   onAIAsk?: (question: string) => void;
   aiLoading?: boolean;
   aiLastAnswer?: string;
@@ -87,6 +86,16 @@ function hasActiveDescendant<T extends { id: string; subitems: T[] }>(items: T[]
   return items.some((item) => item.id === activeId || hasActiveDescendant(item.subitems, activeId));
 }
 
+/** Depth of an item in the tree (0 = root). Returns -1 if not found. */
+function itemDepth<T extends { id: string; subitems: T[] }>(items: T[], targetId: string, depth = 0): number {
+  for (const item of items) {
+    if (item.id === targetId) return depth;
+    const d = itemDepth(item.subitems, targetId, depth + 1);
+    if (d >= 0) return d;
+  }
+  return -1;
+}
+
 function findActiveEpubItem(items: EpubTocItem[], currentHref?: string): EpubTocItem | null {
   if (!currentHref) return null;
   const flattened = flattenEpubItems(items);
@@ -117,6 +126,18 @@ function findActivePdfItem(items: PdfTocItem[], currentPage?: number): PdfTocIte
   return active;
 }
 
+// Memoized tree renderers to prevent re-renders on every epubCurrentHref change
+const MemoizedEpubTree = memo(function MemoizedEpubTree({ items, renderItem, activeId }: { items: EpubTocItem[]; renderItem: (item: EpubTocItem, depth?: number) => React.ReactNode; activeId: string | null }) {
+  return <div className="pb-2 space-y-0.5">{items.map((tocItem) => renderItem(tocItem))}</div>;
+}, (prev, next) => prev.activeId === next.activeId && prev.items === next.items && prev.renderItem === next.renderItem);
+
+const MemoizedPdfTree = memo(function MemoizedPdfTree({ items, renderItem, activeId }: { items: PdfTocItem[]; renderItem: (item: PdfTocItem, depth?: number) => React.ReactNode; activeId: string | null }) {
+  return <div className="pb-2 space-y-0.5">{items.map((tocItem) => renderItem(tocItem))}</div>;
+}, (prev, next) => prev.activeId === next.activeId && prev.items === next.items && prev.renderItem === next.renderItem);
+
+// Ref to skip sidebar auto-scroll when user manually clicks a TOC item
+const userClickedTocRef = { current: false };
+
 export function OutlineSidebar({
   book,
   currentChapterId,
@@ -145,21 +166,79 @@ export function OutlineSidebar({
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
   const outlineScrollRootRef = useRef<HTMLDivElement>(null);
 
-  const activeEpubItem = useMemo(
+  // ─── Stabilised active item with hysteresis ───────────────────────
+  // Raw computed values (re-computed on every render from props)
+  const rawEpubItem = useMemo(
     () => (isEpubMode ? findActiveEpubItem(epubToc || [], epubCurrentHref) : null),
-    [isEpubMode, epubToc, epubCurrentHref]
+    [isEpubMode, epubToc, epubCurrentHref],
   );
 
-  const activePdfItem = useMemo(
+  const rawPdfItem = useMemo(
     () => (isPdfMode ? findActivePdfItem(pdfToc || [], pdfCurrentPage) : null),
-    [isPdfMode, pdfToc, pdfCurrentPage]
+    [isPdfMode, pdfToc, pdfCurrentPage],
   );
 
-  const activeOutlineItemId = activeEpubItem?.id || activePdfItem?.id || null;
+  // Stabilised (debounced) active item — prevents rapid bounce between parent/child
+  const [stableActiveId, setStableActiveId] = useState<string | null>(null);
+  const pendingIdRef = useRef<string | null>(null);
+  const debounceTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const candidateId = rawEpubItem?.id ?? rawPdfItem?.id ?? null;
+
+    // If same as current stable → nothing to do
+    if (candidateId === stableActiveId) {
+      pendingIdRef.current = null;
+      if (debounceTimerRef.current) {
+        window.clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      return;
+    }
+
+    // Level precedence: if candidate is an ancestor of current stable, require longer settle
+    const tocItems = isEpubMode ? (epubToc || []) : isPdfMode ? (pdfToc || []) : [];
+    const candidateDepth = candidateId ? itemDepth(tocItems as any, candidateId) : -1;
+    const currentDepth = stableActiveId ? itemDepth(tocItems as any, stableActiveId) : -1;
+    const isRevertToParent = candidateDepth >= 0 && currentDepth >= 0 && candidateDepth < currentDepth;
+
+    const delay = isRevertToParent ? 800 : 500;
+
+    // If the pending candidate changed, restart timer
+    if (pendingIdRef.current !== candidateId) {
+      pendingIdRef.current = candidateId;
+      if (debounceTimerRef.current) window.clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = window.setTimeout(() => {
+        setStableActiveId(candidateId);
+        pendingIdRef.current = null;
+        debounceTimerRef.current = null;
+      }, delay);
+    }
+
+    return () => {
+      if (debounceTimerRef.current) {
+        window.clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+    };
+  }, [rawEpubItem?.id, rawPdfItem?.id, stableActiveId, isEpubMode, isPdfMode, epubToc, pdfToc]);
+
+  // Expose stable items for rendering
+  const activeEpubItem = useMemo(() => {
+    if (!isEpubMode || !stableActiveId) return rawEpubItem;
+    return flattenEpubItems(epubToc || []).find(i => i.id === stableActiveId) ?? rawEpubItem;
+  }, [isEpubMode, stableActiveId, epubToc, rawEpubItem]);
+
+  const activePdfItem = useMemo(() => {
+    if (!isPdfMode || !stableActiveId) return rawPdfItem;
+    return flattenPdfItems(pdfToc || []).find(i => i.id === stableActiveId) ?? rawPdfItem;
+  }, [isPdfMode, stableActiveId, pdfToc, rawPdfItem]);
+
+  const activeOutlineItemId = stableActiveId ?? rawEpubItem?.id ?? rawPdfItem?.id ?? null;
 
   const currentHeadings = useMemo(
     () => extractHeadings(currentChapterContent || ''),
-    [currentChapterContent]
+    [currentChapterContent],
   );
 
   useEffect(() => {
@@ -170,15 +249,12 @@ export function OutlineSidebar({
     });
   }, [currentChapterId]);
 
-  // Collect all section IDs for open/close all
   const allSectionIds = useMemo(() => {
     if (isEpubMode && epubToc) {
-      const ids = new Set<string>(['contents', ...collectExpandableIds(epubToc)]);
-      return ids;
+      return new Set<string>(['contents', ...collectExpandableIds(epubToc)]);
     }
     if (isPdfMode && pdfToc) {
-      const ids = new Set<string>(['contents', ...collectExpandableIds(pdfToc)]);
-      return ids;
+      return new Set<string>(['contents', ...collectExpandableIds(pdfToc)]);
     }
     const ids = new Set<string>();
     if (frontMatter.length) ids.add('front-matter');
@@ -187,42 +263,37 @@ export function OutlineSidebar({
     return ids;
   }, [isEpubMode, isPdfMode, epubToc, pdfToc, frontMatter.length, appendix.length]);
 
+  // Auto-expand ancestors of active item
   useEffect(() => {
-    const activeId = activeEpubItem?.id || activePdfItem?.id;
+    const activeId = activeOutlineItemId;
     if (!activeId) return;
 
-    const ancestorIds = activeEpubItem
+    const ancestorIds = isEpubMode
       ? collectAncestorIds(epubToc || [], activeId)
-      : activePdfItem
+      : isPdfMode
       ? collectAncestorIds(pdfToc || [], activeId)
       : [];
 
     setExpandedSections((prev) => new Set([...prev, 'contents', ...ancestorIds]));
-  }, [activeEpubItem, activePdfItem, epubToc, pdfToc]);
+  }, [activeOutlineItemId, isEpubMode, isPdfMode, epubToc, pdfToc]);
 
-  // Debounced auto-scroll: only scroll sidebar after active item stabilizes for 300ms
-  const lastActiveIdRef = useRef<string | null>(null);
-
+  // Auto-scroll sidebar to active item (debounced at 500ms) — skip on user click
+  const scrollDebounceRef = useRef<number | null>(null);
   useEffect(() => {
     if (!activeOutlineItemId) return;
-    // Skip if same item (no need to re-scroll)
-    if (lastActiveIdRef.current === activeOutlineItemId) return;
+    if (userClickedTocRef.current) return; // skip sidebar auto-scroll on user click
 
-    // Debounce: wait 300ms for the active item to stabilize before scrolling
-    const debounceTimer = window.setTimeout(() => {
-      lastActiveIdRef.current = activeOutlineItemId;
+    if (scrollDebounceRef.current) window.clearTimeout(scrollDebounceRef.current);
 
+    scrollDebounceRef.current = window.setTimeout(() => {
       let attempts = 0;
       const tryScroll = () => {
         const root = outlineScrollRootRef.current;
         const viewport = root?.querySelector<HTMLElement>('[data-radix-scroll-area-viewport]');
-        const target = root?.querySelector<HTMLElement>(`[data-outline-item-id="${CSS.escape(activeOutlineItemId)}"]`);
+        const target = root?.querySelector<HTMLElement>(`[data-outline-item-id="${CSS.escape(activeOutlineItemId || '')}"]`);
 
         if (!viewport || !target) {
-          if (attempts < 4) {
-            attempts += 1;
-            window.setTimeout(tryScroll, 150);
-          }
+          if (attempts < 4) { attempts += 1; window.setTimeout(tryScroll, 150); }
           return;
         }
 
@@ -247,9 +318,9 @@ export function OutlineSidebar({
       };
 
       tryScroll();
-    }, 300);
+    }, 500);
 
-    return () => window.clearTimeout(debounceTimer);
+    return () => { if (scrollDebounceRef.current) window.clearTimeout(scrollDebounceRef.current); };
   }, [activeOutlineItemId]);
 
   const handleOpenAll = useCallback(() => {
@@ -379,7 +450,11 @@ export function OutlineSidebar({
 
           <button
             type="button"
-            onClick={() => onEpubNavigate?.(item.href)}
+            onClick={() => {
+              userClickedTocRef.current = true;
+              setTimeout(() => { userClickedTocRef.current = false; }, 1500);
+              onEpubNavigate?.(item.href);
+            }}
             data-outline-item-id={item.id}
             className={cn(
               'flex-1 min-w-0 rounded-md px-3 py-1.5 text-left text-sm transition-colors',
@@ -474,14 +549,6 @@ export function OutlineSidebar({
         </div>
       </div>
 
-      {/* Reading Assistant (AI quick-ask) */}
-      {onAIAsk && (
-        <SidebarAIInput
-          onAsk={onAIAsk}
-          isLoading={aiLoading}
-          lastAnswer={aiLastAnswer}
-        />
-      )}
 
       {/* OUTLINE label + Open all / Close all */}
       <div className="px-4 py-2 flex items-center justify-between border-b border-border/30">
@@ -523,7 +590,7 @@ export function OutlineSidebar({
                   <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", !expandedSections.has('contents') && "-rotate-90")} />
                 </CollapsibleTrigger>
                 <CollapsibleContent>
-                  <div className="pb-2 space-y-0.5">{(epubToc || []).map((tocItem) => renderEpubItem(tocItem))}</div>
+                  <MemoizedEpubTree items={epubToc || []} renderItem={renderEpubItem} activeId={stableActiveId} />
                 </CollapsibleContent>
               </Collapsible>
             </div>
@@ -535,7 +602,7 @@ export function OutlineSidebar({
                   <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", !expandedSections.has('contents') && "-rotate-90")} />
                 </CollapsibleTrigger>
                 <CollapsibleContent>
-                  <div className="pb-2 space-y-0.5">{(pdfToc || []).map((tocItem) => renderPdfItem(tocItem))}</div>
+                  <MemoizedPdfTree items={pdfToc || []} renderItem={renderPdfItem} activeId={stableActiveId} />
                 </CollapsibleContent>
               </Collapsible>
             </div>
@@ -551,4 +618,3 @@ export function OutlineSidebar({
     </div>
   );
 }
-

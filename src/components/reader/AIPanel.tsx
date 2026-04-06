@@ -116,11 +116,36 @@ export function AIPanel({ chapterTitle, chapterContent, bookTitle, bookId, chapt
     onAIQuery();
 
     try {
-      // Use visible text first; if short, try fetching deeper context
+      // Use visible text first; if short, try fetching from book_chapters table
       let contextText = chapterContent;
-      if (chapterContent.length < 500) {
+      if (chapterContent.length < 200) {
         const deep = await fetchDeepContext();
-        if (deep) contextText = deep;
+        if (deep) {
+          contextText = deep;
+        } else {
+          // Direct DB fallback
+          try {
+            const { data: chapterRows } = await supabase
+              .from('book_chapters')
+              .select('content')
+              .eq('book_id', bookId)
+              .order('sort_order', { ascending: true })
+              .limit(3);
+            if (chapterRows && chapterRows.length > 0) {
+              contextText = chapterRows.map((r: any) => r.content || '').join('\n\n').slice(0, 15000);
+            }
+          } catch { /* use whatever we have */ }
+        }
+      }
+
+      if (contextText.length < 50) {
+        const errorMsg: AIMessage = {
+          id: `msg-${Date.now()}-err`,
+          role: 'assistant',
+          content: 'Chapter content is still loading. Please wait a moment and try again.',
+        };
+        setMessages(prev => [...prev, errorMsg]);
+        return;
       }
 
       const { data, error } = await supabase.functions.invoke('gemini-ai', {

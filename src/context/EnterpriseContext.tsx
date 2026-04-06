@@ -143,7 +143,8 @@ export function EnterpriseProvider({ children }: { children: ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (session?.user) {
         setTimeout(() => {
-          void loadEnterpriseData(session.user.id).then((enterpriseId) => {
+          const silent = event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED';
+          void loadEnterpriseData(session.user.id, { silent }).then((enterpriseId) => {
             if (event === 'SIGNED_IN') {
               void supabase.from('usage_events').insert([{
                 event_type: 'login',
@@ -162,7 +163,7 @@ export function EnterpriseProvider({ children }: { children: ReactNode }) {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
-        void loadEnterpriseData(session.user.id);
+        void loadEnterpriseData(session.user.id, { silent: true });
       } else {
         setLoading(false);
       }
@@ -185,8 +186,8 @@ export function EnterpriseProvider({ children }: { children: ReactNode }) {
 
   const [isRittenhouseManagement, setIsRittenhouseManagement] = useState(false);
 
-  const loadEnterpriseData = async (userId: string): Promise<string | null> => {
-    setLoading(true);
+  const loadEnterpriseData = async (userId: string, options?: { silent?: boolean }): Promise<string | null> => {
+    if (!options?.silent) setLoading(true);
     let resultEnterpriseId: string | null = null;
     try {
       // 0. Check platform role status (platform_admin or rittenhouse_management)

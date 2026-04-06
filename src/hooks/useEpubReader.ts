@@ -28,8 +28,8 @@ interface UseEpubReaderOptions {
 
 function flattenToc(items: NavItem[]): EpubTocItem[] {
   return items.map((item) => ({
-    id: item.id || item.href,
-    href: item.href,
+    id: item.href?.trim() || item.id || item.label?.trim() || 'Untitled',
+    href: item.href?.trim() || '',
     label: item.label?.trim() || 'Untitled',
     subitems: item.subitems ? flattenToc(item.subitems) : [],
   }));
@@ -81,6 +81,22 @@ function resolveRelativeHref(baseHref: string, href: string): string {
   } catch {
     return normalizedHref.replace(/^\/+/, '').replace(/^\.\//, '');
   }
+}
+
+function getDisplayHrefCandidates(href: string): string[] {
+  const exactHref = `${href || ''}`.trim();
+  if (!exactHref) return [];
+
+  const decodedHref = safeDecodeHref(exactHref);
+  const normalizedHref = decodedHref.replace(/^\/+/, '').replace(/^\.\//, '');
+  const strippedPrefixHref = normalizedHref.replace(/^(OEBPS|OPS|Text|content|xhtml)\//i, '');
+
+  return Array.from(new Set([
+    exactHref,
+    decodedHref,
+    normalizedHref,
+    strippedPrefixHref,
+  ].filter(Boolean)));
 }
 
 function extractVisibleText(rendition: Rendition): string {
@@ -178,98 +194,35 @@ function resolveActiveHref(
   return sameFragmentItem?.href || samePathItems[0]?.href || flattened[0]?.href || fallbackHref;
 }
 
-function findAnchorElement(doc: Document, fragment: string): HTMLElement | null {
-  const normalizedFragment = safeDecodeHref(fragment).trim();
-  if (!normalizedFragment) return doc.body as HTMLElement | null;
-
-  const directMatch = doc.getElementById(normalizedFragment)
-    || doc.querySelector(`[name="${CSS.escape(normalizedFragment)}"]`);
-  if (directMatch instanceof HTMLElement) return directMatch;
-
-  const lowered = normalizedFragment.toLowerCase();
-  const candidates = Array.from(doc.querySelectorAll<HTMLElement>('[id], [name]'));
-  return candidates.find((candidate) => {
-    const id = candidate.getAttribute('id')?.trim().toLowerCase();
-    const name = candidate.getAttribute('name')?.trim().toLowerCase();
-    return id === lowered || name === lowered;
-  }) || null;
-}
-
-function scrollToRenderedTarget(rendition: Rendition, containerId: string, href: string): boolean {
-  const container = document.getElementById(containerId);
-  if (!(container instanceof HTMLElement)) return false;
-
-  const target = splitNormalizedHref(href);
-  const contents = rendition.getContents() as unknown as any[];
-  const containerRect = container.getBoundingClientRect();
-
-  for (const content of contents) {
-    const doc = content?.document as Document | undefined;
-    const frame = doc?.defaultView?.frameElement as HTMLElement | null;
-    if (!doc || !frame) continue;
-
-    const sectionPath = splitNormalizedHref(content?.section?.href || href).path;
-    if (target.path && sectionPath && sectionPath !== target.path) continue;
-
-    const frameRect = frame.getBoundingClientRect();
-
-    if (!target.fragment) {
-      const nextTop = container.scrollTop + (frameRect.top - containerRect.top) - 16;
-      container.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
-      return true;
-    }
-
-    const anchor = findAnchorElement(doc, target.fragment);
-    if (!anchor) continue;
-
-    const anchorRect = anchor.getBoundingClientRect();
-    const nextTop = container.scrollTop
-      + (frameRect.top - containerRect.top)
-      + anchorRect.top
-      - 24;
-
-    container.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
-    return true;
-  }
-
-  return false;
-}
-
-function navigateRenditionToHref(
+async function navigateRenditionToHref(
   rendition: Rendition,
-  containerId: string,
   href: string,
-  currentSectionHref: string,
   onNavigate?: (targetHref: string) => void,
 ) {
-  const targetHref = safeDecodeHref(href);
-  const target = splitNormalizedHref(targetHref);
-  const current = splitNormalizedHref(currentSectionHref || targetHref);
+  const targetHref = `${href || ''}`.trim();
+  if (!targetHref) return;
 
   onNavigate?.(targetHref);
 
-  const attemptScroll = (attempt = 0) => {
-    if (scrollToRenderedTarget(rendition, containerId, targetHref)) return;
-    if (attempt < 5) {
-      window.setTimeout(() => attemptScroll(attempt + 1), 120);
+  const hrefCandidates = getDisplayHrefCandidates(targetHref);
+  let lastError: unknown = null;
+
+  for (const candidate of hrefCandidates) {
+    try {
+      await rendition.display(candidate);
+      return;
+    } catch (error) {
+      lastError = error;
     }
-  };
-
-  const sameSpineItem = target.path && current.path && target.path === current.path;
-
-  if (sameSpineItem) {
-    window.requestAnimationFrame(() => attemptScroll());
-    return;
   }
 
-  void rendition.display(targetHref).then(() => {
-    window.requestAnimationFrame(() => attemptScroll());
-  }).catch(() => {
-    // ignore display errors here; load effect handles surfaced errors
-  });
+  if (lastError) throw lastError;
 }
 
 export function useEpubReader(options: UseEpubReaderOptions) {
+  // Navigation lock: suppress scroll-sync updates for ~1.2s after goToChapter
+  const navigationLockRef = useRef(false);
+  const navigationLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { filePath, containerId, fontSize = 18, lineHeight = 1.8, fontFamily = 'sans', theme = 'default', focusMode = false } = options;
   const isDark = theme === 'default';
 
@@ -277,6 +230,12 @@ export function useEpubReader(options: UseEpubReaderOptions) {
     fontFamily === 'serif' ? '"Georgia", "Times New Roman", serif' :
     fontFamily === 'mono' ? '"JetBrains Mono", "Courier New", monospace' :
     '"Inter", system-ui, -apple-system, sans-serif';
+
+  // Ref to hold current prefs without triggering re-renders in the load effect
+  const prefsRef = useRef({ fontSize, lineHeight, fontFamilyCSS, theme, isDark });
+  useEffect(() => {
+    prefsRef.current = { fontSize, lineHeight, fontFamilyCSS, theme, isDark };
+  }, [fontSize, lineHeight, fontFamilyCSS, theme, isDark]);
 
   const bookRef = useRef<Book | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
@@ -366,16 +325,16 @@ export function useEpubReader(options: UseEpubReaderOptions) {
             event.stopPropagation();
             (event as MouseEvent & { stopImmediatePropagation?: () => void }).stopImmediatePropagation?.();
 
-            navigateRenditionToHref(
+            void navigateRenditionToHref(
               rendition,
-              containerId,
               resolvedHref,
-              contents?.section?.href || lastLocationHrefRef.current || '',
               (nextHref) => {
                 lastLocationHrefRef.current = nextHref;
                 setCurrentHref(nextHref);
               },
-            );
+            ).catch((error) => {
+              console.warn('Failed to navigate EPUB internal link:', error);
+            });
           }, true);
         });
 
@@ -385,6 +344,9 @@ export function useEpubReader(options: UseEpubReaderOptions) {
             if (destroyed || !renditionRef.current) return;
             const nextVisibleText = extractVisibleText(renditionRef.current);
             if (nextVisibleText) setVisibleText(nextVisibleText);
+
+            // Skip href updates while navigation lock is active
+            if (navigationLockRef.current) return;
 
             const resolvedHref = resolveActiveHref(
               renditionRef.current,
@@ -397,17 +359,18 @@ export function useEpubReader(options: UseEpubReaderOptions) {
               lastLocationHrefRef.current = resolvedHref;
               setCurrentHref((prev) => (prev === resolvedHref ? prev : resolvedHref));
             }
-          }, 80);
+          }, 200);
         };
 
+        const prefs = prefsRef.current;
         rendition.themes.default({
           'body': {
-            'font-size': `${fontSize}px !important`,
-            'line-height': `${lineHeight} !important`,
-            'font-family': `${fontFamilyCSS} !important`,
+            'font-size': `${prefs.fontSize}px !important`,
+            'line-height': `${prefs.lineHeight} !important`,
+            'font-family': `${prefs.fontFamilyCSS} !important`,
             'padding': '20px 40px !important',
             'max-width': '100% !important',
-            'color': isDark ? '#e2e8f0 !important' : theme === 'sepia' ? '#3d2e1e !important' : '#1a202c !important',
+            'color': prefs.isDark ? '#e2e8f0 !important' : prefs.theme === 'sepia' ? '#3d2e1e !important' : '#1a202c !important',
             'background': 'transparent !important',
           },
           'p': {
@@ -415,7 +378,7 @@ export function useEpubReader(options: UseEpubReaderOptions) {
             'text-align': 'justify !important',
           },
           'h1, h2, h3, h4, h5, h6': {
-            'color': isDark ? '#f1f5f9 !important' : '#111827 !important',
+            'color': prefs.isDark ? '#f1f5f9 !important' : '#111827 !important',
             'margin-top': '1.5em !important',
             'margin-bottom': '0.5em !important',
           },
@@ -436,14 +399,14 @@ export function useEpubReader(options: UseEpubReaderOptions) {
         rendition.on('relocated', (location: any) => {
           if (destroyed) return;
           setCurrentLocation(location);
-          if (location?.start?.href) {
+          if (location?.start?.href && !navigationLockRef.current) {
             lastLocationHrefRef.current = location.start.href;
             setCurrentHref(location.start.href);
           }
           if (relocatedTimer) clearTimeout(relocatedTimer);
           relocatedTimer = setTimeout(() => {
             syncViewState(location?.start?.href);
-          }, 60);
+          }, 150);
         });
 
         rendition.on('selected', (cfiRange: string, contents: any) => {
@@ -496,11 +459,14 @@ export function useEpubReader(options: UseEpubReaderOptions) {
         bookRef.current = null;
       }
     };
-  }, [filePath, containerId, fontSize, lineHeight, fontFamily, theme, focusMode, fontFamilyCSS, isDark]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filePath, containerId]);
 
   useEffect(() => {
     if (!renditionRef.current || !isReady) return;
-    renditionRef.current.themes.default({
+    const rendition = renditionRef.current;
+
+    rendition.themes.default({
       'body': {
         'font-size': `${fontSize}px !important`,
         'line-height': `${lineHeight} !important`,
@@ -509,27 +475,41 @@ export function useEpubReader(options: UseEpubReaderOptions) {
         'background': 'transparent !important',
       },
     });
+
+    // Apply styles to already-rendered iframes without re-displaying (preserves scroll position)
     try {
-      const loc = renditionRef.current.location;
-      if (loc?.start?.cfi) {
-        renditionRef.current.display(loc.start.cfi);
+      const contents = rendition.getContents() as unknown as any[];
+      for (const content of contents) {
+        const doc = content?.document as Document | undefined;
+        if (!doc?.body) continue;
+        doc.body.style.fontSize = `${fontSize}px`;
+        doc.body.style.lineHeight = `${lineHeight}`;
+        doc.body.style.fontFamily = fontFamilyCSS;
+        doc.body.style.color = isDark ? '#e2e8f0' : theme === 'sepia' ? '#3d2e1e' : '#1a202c';
       }
     } catch {}
-  }, [fontSize, lineHeight, fontFamily, fontFamilyCSS, theme, isDark, isReady]);
+  }, [fontSize, lineHeight, fontFamilyCSS, theme, isDark, isReady]);
 
   const goToChapter = useCallback((href: string) => {
     if (!renditionRef.current) return;
 
-    navigateRenditionToHref(
+    // Engage navigation lock to prevent scroll-sync from overriding
+    navigationLockRef.current = true;
+    if (navigationLockTimerRef.current) clearTimeout(navigationLockTimerRef.current);
+    navigationLockTimerRef.current = setTimeout(() => {
+      navigationLockRef.current = false;
+    }, 1200);
+
+    void navigateRenditionToHref(
       renditionRef.current,
-      containerId,
       href,
-      (renditionRef.current as any).location?.start?.href || lastLocationHrefRef.current || '',
       (targetHref) => {
         lastLocationHrefRef.current = targetHref;
         setCurrentHref(targetHref);
       },
-    );
+    ).catch((error) => {
+      console.warn('Failed to navigate EPUB ToC target:', error);
+    });
   }, [containerId]);
 
   const goNext = useCallback(() => {

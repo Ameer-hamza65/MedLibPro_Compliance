@@ -175,7 +175,7 @@ supabase secrets set GEMINI_API_KEY=your-gemini-api-key
 
 ## Step 11: Connect S3 (Book Import from AWS)
 
-The `import-s3-books` edge function uses **direct AWS credentials** (not the  connector gateway). Set these secrets:
+The `import-s3-books` edge function uses **direct AWS credentials** (not the Lovable connector gateway). Set these secrets:
 
 ```bash
 supabase secrets set AWS_ACCESS_KEY_ID=AKIA...your-access-key
@@ -194,7 +194,37 @@ supabase secrets set AWS_S3_REGION=eu-north-1
 
 ### Trigger the Import
 
+**Dry run first** (verifies S3 connectivity without importing):
 
+```bash
+# Linux/Mac:
+curl -X POST "https://YOUR-PROJECT-ID.supabase.co/functions/v1/import-s3-books" \
+  -H "Authorization: Bearer YOUR_ANON_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prefix": "", "dryRun": true}'
+
+# Windows PowerShell:
+Invoke-RestMethod -Uri "https://YOUR-PROJECT-ID.supabase.co/functions/v1/import-s3-books" `
+  -Method POST `
+  -Headers @{ "Authorization" = "Bearer YOUR_ANON_KEY"; "Content-Type" = "application/json" } `
+  -Body '{"prefix":"","dryRun":true}'
+```
+
+**Actual import** (imports up to 50 books):
+
+```bash
+# Linux/Mac:
+curl -X POST "https://YOUR-PROJECT-ID.supabase.co/functions/v1/import-s3-books" \
+  -H "Authorization: Bearer YOUR_ANON_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prefix": "", "limit": 50}'
+
+# Windows PowerShell:
+Invoke-RestMethod -Uri "https://YOUR-PROJECT-ID.supabase.co/functions/v1/import-s3-books" `
+  -Method POST `
+  -Headers @{ "Authorization" = "Bearer YOUR_ANON_KEY"; "Content-Type" = "application/json" } `
+  -Body '{"prefix":"","limit":50}'
+```
 
 ### S3 Bucket Structure
 

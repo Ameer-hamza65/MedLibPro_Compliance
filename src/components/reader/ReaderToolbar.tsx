@@ -47,7 +47,7 @@ export function ReaderToolbar({
   onToggleSplitScreen,
 }: ReaderToolbarProps) {
   return (
-    <div className="border-b border-border/50 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80 px-4 py-2 flex items-center justify-between gap-2 flex-shrink-0">
+    <div className="relative z-50 border-b border-border/50 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80 px-4 py-2 flex items-center justify-between gap-2 flex-shrink-0">
       {/* Left: Nav + Title */}
       <div className="flex items-center gap-2 min-w-0 flex-1">
         <Tooltip>
@@ -62,7 +62,7 @@ export function ReaderToolbar({
               <ChevronLeft className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Previous Chapter</TooltipContent>
+          <TooltipContent side="bottom">Previous Chapter</TooltipContent>
         </Tooltip>
 
         <div className="min-w-0 flex-1">
@@ -82,7 +82,7 @@ export function ReaderToolbar({
               <ChevronRight className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Next Chapter</TooltipContent>
+          <TooltipContent side="bottom">Next Chapter</TooltipContent>
         </Tooltip>
         
         <Badge variant="secondary" className="flex-shrink-0 text-xs">
@@ -98,7 +98,7 @@ export function ReaderToolbar({
               <Search className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Search in chapter</TooltipContent>
+          <TooltipContent side="bottom">Search in chapter</TooltipContent>
         </Tooltip>
         
         <Tooltip>
@@ -112,7 +112,7 @@ export function ReaderToolbar({
               <Highlighter className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Highlights & Annotations</TooltipContent>
+          <TooltipContent side="bottom">Highlights & Annotations</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -121,7 +121,7 @@ export function ReaderToolbar({
               <ZoomOut className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Decrease font size</TooltipContent>
+          <TooltipContent side="bottom">Decrease font size</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -130,7 +130,7 @@ export function ReaderToolbar({
               <ZoomIn className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Increase font size</TooltipContent>
+          <TooltipContent side="bottom">Increase font size</TooltipContent>
         </Tooltip>
       </div>
 
@@ -147,7 +147,7 @@ export function ReaderToolbar({
               <List className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Table of Contents</TooltipContent>
+          <TooltipContent side="bottom">Table of Contents</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -161,7 +161,7 @@ export function ReaderToolbar({
               <MessageSquare className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>AI Assistant</TooltipContent>
+          <TooltipContent side="bottom">AI Assistant</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -175,7 +175,7 @@ export function ReaderToolbar({
               <BarChart3 className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Reading Analytics</TooltipContent>
+          <TooltipContent side="bottom">Reading Analytics</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -193,7 +193,7 @@ export function ReaderToolbar({
               )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{isBookmarked ? 'Remove Bookmark' : 'Bookmark Chapter'}</TooltipContent>
+          <TooltipContent side="bottom">{isBookmarked ? 'Remove Bookmark' : 'Bookmark Chapter'}</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -202,7 +202,7 @@ export function ReaderToolbar({
               <Share2 className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Share</TooltipContent>
+          <TooltipContent side="bottom">Share</TooltipContent>
         </Tooltip>
 
         {onToggleSplitScreen && (
@@ -221,7 +221,7 @@ export function ReaderToolbar({
                 )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{isSplitScreen ? 'Close Split View' : 'Open Split View'}</TooltipContent>
+            <TooltipContent side="bottom">{isSplitScreen ? 'Close Split View' : 'Open Split View'}</TooltipContent>
           </Tooltip>
         )}
       </div>

@@ -32,10 +32,15 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { RoleProtectedRoute } from "@/components/RoleProtectedRoute";
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1 } },
+  defaultOptions: {
+    queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 5 * 60 * 1000 },
+  },
 });
 
-const App = () => (
+const App = () => {
+  const isEmbedded = new URLSearchParams(window.location.search).get('embedded') === 'true';
+
+  return (
   <QueryClientProvider client={queryClient}>
     <UserProvider>
       <BookProvider>
@@ -47,7 +52,7 @@ const App = () => (
             <BrowserRouter>
               <ScrollToTop />
               <div className="min-h-screen flex flex-col">
-                <Header />
+                {!isEmbedded && <Header />}
                 <main className="flex-1" id="main-content">
                   <Routes>
                     <Route path="/" element={<Index />} />
@@ -72,7 +77,7 @@ const App = () => (
                     <Route path="*" element={<NotFound />} />
                   </Routes>
                 </main>
-                <Footer />
+                {!isEmbedded && <Footer />}
               </div>
             </BrowserRouter>
           </TooltipProvider>
@@ -81,6 +86,7 @@ const App = () => (
       </BookProvider>
     </UserProvider>
   </QueryClientProvider>
-);
+  );
+};
 
 export default App;

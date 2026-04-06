@@ -15,6 +15,7 @@ interface PdfReaderProps {
     pageNumber: number;
     topOffset?: number | null;
   };
+  navigationNonce?: number;
   onTocLoaded?: (toc: PdfTocItem[]) => void;
   onPageChange?: (page: number) => void;
   onVisibleTextChange?: (text: string) => void;
@@ -30,6 +31,7 @@ export function PdfReader({
   fontSize = 18,
   theme = 'default',
   navigateToPage,
+  navigationNonce,
   onTocLoaded,
   onPageChange,
   onVisibleTextChange,
@@ -65,7 +67,7 @@ export function PdfReader({
     if (navigateToPage?.pageNumber && isReady) {
       goToPage(navigateToPage.pageNumber, navigateToPage.topOffset);
     }
-  }, [navigateToPage, isReady, goToPage]);
+  }, [navigateToPage, navigationNonce, isReady, goToPage]);
 
   // Notify parent of TOC
   useEffect(() => {

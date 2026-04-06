@@ -1,4 +1,4 @@
-# Migration Guide:  Cloud → Your Own Supabase
+# Migration Guide: Lovable Cloud → Your Own Supabase
 
 ## Step 1: Create a Supabase Project
 1. Go to [supabase.com](https://supabase.com) and create a new project
@@ -34,11 +34,11 @@ supabase functions deploy extract-pdf-text --no-verify-jwt
 
 ## Step 4: Set Edge Function Secrets
 
-### Option A: Use  AI Gateway (recommended if you have a  API key)
+### Option A: Use Lovable AI Gateway (recommended if you have a Lovable API key)
 ```bash
-supabase secrets set =<your--api-key>
+supabase secrets set LOVABLE_API_KEY=<your-lovable-api-key>
 ```
-The `gemini-ai` edge function uses the  AI Gateway by default.
+The `gemini-ai` edge function uses the Lovable AI Gateway by default.
 
 ### Option B: Use your own Gemini API key
 ```bash
@@ -79,7 +79,7 @@ INSERT INTO platform_roles (user_id, role) VALUES ('<user-uuid>', 'platform_admi
 ```
 
 ## Step 9: Migrate Data (Optional)
-Export your existing data from  Cloud and import it:
+Export your existing data from Lovable Cloud and import it:
 - Use Cloud View → Database → Tables → Export for each table
 - Import via Supabase Dashboard → Table Editor → Import CSV
 

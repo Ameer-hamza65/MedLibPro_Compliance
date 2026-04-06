@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Send, Sparkles, Loader2 } from 'lucide-react';
+import { Send, Sparkles, Loader2, RefreshCw, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -12,13 +12,22 @@ interface SidebarAIInputProps {
 
 export function SidebarAIInput({ onAsk, isLoading = false, lastAnswer }: SidebarAIInputProps) {
   const [question, setQuestion] = useState('');
+  const [lastQuestion, setLastQuestion] = useState('');
+
+  const isError = lastAnswer?.startsWith('Failed to') || lastAnswer?.includes('error') || lastAnswer?.includes('Error');
 
   const handleSubmit = useCallback((e?: React.FormEvent) => {
     e?.preventDefault();
     if (!question.trim() || isLoading) return;
+    setLastQuestion(question.trim());
     onAsk(question.trim());
     setQuestion('');
   }, [question, isLoading, onAsk]);
+
+  const handleRetry = useCallback(() => {
+    if (!lastQuestion || isLoading) return;
+    onAsk(lastQuestion);
+  }, [lastQuestion, isLoading, onAsk]);
 
   return (
     <div className="px-4 py-3 border-b border-border/50">
@@ -52,8 +61,31 @@ export function SidebarAIInput({ onAsk, isLoading = false, lastAnswer }: Sidebar
         </Button>
       </form>
       {lastAnswer && (
-        <div className="mt-2 p-2 rounded-md bg-accent/5 border border-accent/10 text-xs text-muted-foreground leading-relaxed max-h-32 overflow-y-auto">
-          {lastAnswer}
+        <div className={`mt-2 p-2 rounded-md text-xs leading-relaxed max-h-32 overflow-y-auto border ${
+          isError
+            ? 'bg-destructive/5 border-destructive/20 text-destructive'
+            : 'bg-accent/5 border-accent/10 text-muted-foreground'
+        }`}>
+          {isError && (
+            <div className="flex items-center gap-1.5 mb-1">
+              <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+              <span className="font-medium text-[10px]">Something went wrong</span>
+            </div>
+          )}
+          <span>{isError ? 'Could not get a response. Please check that chapter content has loaded and try again.' : lastAnswer}</span>
+          {isError && lastQuestion && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 mt-1.5 text-[10px] gap-1"
+              onClick={handleRetry}
+              disabled={isLoading}
+            >
+              <RefreshCw className="h-3 w-3" />
+              Retry
+            </Button>
+          )}
         </div>
       )}
     </div>

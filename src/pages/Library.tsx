@@ -371,13 +371,17 @@ export default function Library() {
     }
   }, [books, navigate, toast]);
 
-  const handleViewChapter = useCallback((bookId: string, chapterId: string) => {
+  const handleViewChapter = useCallback((bookId: string, chapterId: string, chapterTitle?: string) => {
     const book = books.find(b => b.id === bookId);
     if (!book) return;
-    const normalizedChapterId = book.filePath && book.fileType === 'epub'
-      ? (chapterId.startsWith('epub:') ? chapterId : `epub:${encodeURIComponent(chapterId)}`)
-      : chapterId;
-    navigate(`/reader?book=${bookId}&chapter=${normalizedChapterId}`);
+
+    if (book.filePath && book.fileType === 'epub') {
+      // For EPUB books, pass the chapter title so Reader can locate it in the EPUB TOC
+      const titleParam = chapterTitle ? `&chapterTitle=${encodeURIComponent(chapterTitle)}` : '';
+      navigate(`/reader?book=${bookId}&chapter=__find__${titleParam}`);
+    } else {
+      navigate(`/reader?book=${bookId}&chapter=${chapterId}`);
+    }
   }, [books, navigate]);
 
   const clearSearch = useCallback(() => {
@@ -516,7 +520,7 @@ export default function Library() {
                     <div
                       key={ch.id}
                       className="p-4 rounded-lg border border-border bg-card hover:bg-accent/50 cursor-pointer transition-colors"
-                      onClick={() => handleViewChapter(ch.book_id, ch.chapter_key)}
+                      onClick={() => handleViewChapter(ch.book_id, ch.chapter_key, ch.title)}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">

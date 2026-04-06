@@ -209,6 +209,7 @@ export type Database = {
           created_at: string
           id: string
           page_number: number | null
+          search_vector: unknown
           sort_order: number | null
           tags: string[] | null
           title: string
@@ -220,6 +221,7 @@ export type Database = {
           created_at?: string
           id?: string
           page_number?: number | null
+          search_vector?: unknown
           sort_order?: number | null
           tags?: string[] | null
           title: string
@@ -231,6 +233,7 @@ export type Database = {
           created_at?: string
           id?: string
           page_number?: number | null
+          search_vector?: unknown
           sort_order?: number | null
           tags?: string[] | null
           title?: string
@@ -292,6 +295,7 @@ export type Database = {
           published_year: number | null
           publisher: string | null
           search_count: number | null
+          search_vector: unknown
           specialty: string | null
           subtitle: string | null
           tags: string[] | null
@@ -315,6 +319,7 @@ export type Database = {
           published_year?: number | null
           publisher?: string | null
           search_count?: number | null
+          search_vector?: unknown
           specialty?: string | null
           subtitle?: string | null
           tags?: string[] | null
@@ -338,6 +343,7 @@ export type Database = {
           published_year?: number | null
           publisher?: string | null
           search_count?: number | null
+          search_vector?: unknown
           specialty?: string | null
           subtitle?: string | null
           tags?: string[] | null
@@ -912,6 +918,40 @@ export type Database = {
           p_user_id?: string
         }
         Returns: undefined
+      }
+      search_books_fts: {
+        Args: {
+          filter_clause?: string
+          max_results?: number
+          search_query: string
+        }
+        Returns: {
+          authors: string[]
+          description: string
+          file_type: string
+          headline: string
+          id: string
+          published_year: number
+          publisher: string
+          rank: number
+          specialty: string
+          tags: string[]
+          title: string
+        }[]
+      }
+      search_chapters_fts: {
+        Args: { max_results?: number; search_query: string }
+        Returns: {
+          book_authors: string[]
+          book_id: string
+          book_specialty: string
+          book_title: string
+          chapter_key: string
+          headline: string
+          id: string
+          rank: number
+          title: string
+        }[]
       }
       update_subscription: {
         Args: {

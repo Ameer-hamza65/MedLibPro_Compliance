@@ -25,7 +25,8 @@ export function BookProvider({ children }: { children: ReactNode }) {
 
   const refreshFromDB = useCallback(async (force = false) => {
     if (!force && Date.now() - lastFetchedAt.current < CACHE_TTL) return;
-    setIsLoading(true);
+    // Only show loading spinner on initial load, not on background refreshes
+    if (lastFetchedAt.current === 0) setIsLoading(true);
     try {
       const { data: dbBooks, error } = await supabase
         .from('books')
@@ -72,7 +73,7 @@ export function BookProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (authLoading) return;
-    refreshFromDB(true);
+    refreshFromDB(false);
   }, [refreshFromDB, authLoading, user.isLoggedIn]);
 
   const addBook = useCallback((book: EpubBook) => {

@@ -69,11 +69,13 @@ export function EpubReader({
     focusMode,
   });
 
-  // Navigate to a specific href when parent requests it
+  // Navigate to a specific href when parent requests it — nonce-driven
+  const lastProcessedNonceRef = useRef<number>(0);
   useEffect(() => {
-    if (navigateToHref && isReady) {
-      goToChapter(navigateToHref);
-    }
+    if (!navigateToHref || !isReady) return;
+    if (navigateRequestKey == null || navigateRequestKey === lastProcessedNonceRef.current) return;
+    lastProcessedNonceRef.current = navigateRequestKey;
+    goToChapter(navigateToHref);
   }, [navigateToHref, navigateRequestKey, isReady, goToChapter]);
 
   // Notify parent of TOC

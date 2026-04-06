@@ -118,7 +118,7 @@ serve(async (req) => {
     const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
     
     if (!GEMINI_API_KEY) {
-      return new Response(JSON.stringify({ error: "No AI API key configured. Please set GEMINI_API_KEY in Supabase secrets." }), {
+      return new Response(JSON.stringify({ error: "No AI API key configured. Please set GEMINI_API_KEY in Supabase secrets or local .env." }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -130,7 +130,7 @@ serve(async (req) => {
 
     const startTime = Date.now();
 
-    // Direct Google Gemini API setup
+    // Direct Google Gemini API setup using the OpenAI compatibility layer
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`;
     const headers = {
       "Authorization": `Bearer ${GEMINI_API_KEY}`, 
@@ -157,7 +157,7 @@ serve(async (req) => {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
+      console.error("Gemini API error:", response.status, errorText);
       
       if (response.status === 429) {
         return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }), {
@@ -175,35 +175,39 @@ serve(async (req) => {
     const content = data?.choices?.[0]?.message?.content || "No response generated.";
     const tokensUsed = data?.usage?.total_tokens || null;
 
-    // Log to database
+    // Log to Supabase Database
     try {
-      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-      const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-      const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+      const supabaseUrl = Deno.env.get("SUPABASE_URL");
+      const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      
+      if (supabaseUrl && supabaseServiceKey) {
+        const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-      await supabaseAdmin.from("ai_query_logs").insert({
-        book_id: bookId || "unknown",
-        book_title: bookTitle || "Unknown",
-        chapter_id: chapterId || "unknown",
-        chapter_title: chapterTitle || "Unknown",
-        query_type: type || "default",
-        user_prompt: prompt || null,
-        ai_response: content.slice(0, 10000),
-        response_time_ms: responseTimeMs,
-        model_used: "gemini-2.5-flash",
-        tokens_used: tokensUsed,
-        user_id: userId || null,
-        enterprise_id: enterpriseId || null,
-      });
+        await supabaseAdmin.from("ai_query_logs").insert({
+          book_id: bookId || "unknown",
+          book_title: bookTitle || "Unknown",
+          chapter_id: chapterId || "unknown",
+          chapter_title: chapterTitle || "Unknown",
+          query_type: type || "default",
+          user_prompt: prompt || null,
+          ai_response: content.slice(0, 10000),
+          response_time_ms: responseTimeMs,
+          model_used: "gemini-2.5-flash",
+          tokens_used: tokensUsed,
+          user_id: userId || null,
+          enterprise_id: enterpriseId || null,
+        });
+      }
     } catch (logErr) {
       console.error("Failed to log AI query:", logErr);
     }
 
-    // For search type, try to parse structured results
+    // Parse structured JSON results if type is "search"
     if (type === "search") {
       try {
         const parsed = JSON.parse(content);
         let results: any[] = [];
+        
         if (Array.isArray(parsed)) {
           results = parsed;
         } else if (parsed.results && Array.isArray(parsed.results)) {
@@ -211,10 +215,12 @@ serve(async (req) => {
         } else if (parsed.bookId || parsed.title) {
           results = [parsed];
         }
+        
         return new Response(JSON.stringify({ content, results, responseTimeMs }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       } catch {
+        // Fallback parsers if standard JSON.parse fails due to markdown wrappers
         try {
           const arrayMatch = content.match(/\[[\s\S]*\]/);
           if (arrayMatch) {
@@ -232,15 +238,16 @@ serve(async (req) => {
               });
             }
           }
-        } catch { /* fall through */ }
+        } catch { /* fall through and just return content string below */ }
       }
     }
 
     return new Response(JSON.stringify({ content, responseTimeMs }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+    
   } catch (e) {
-    console.error("gemini-ai error:", e);
+    console.error("Edge function execution error:", e);
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

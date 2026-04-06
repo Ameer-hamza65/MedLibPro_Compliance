@@ -19,7 +19,7 @@ interface AISearchResultsProps {
   loading: boolean;
   query: string;
   onViewBook: (bookId: string, title?: string) => void;
-  onViewChapter?: (bookId: string, chapterId: string) => void;
+  onViewChapter?: (bookId: string, chapterId: string, chapterTitle?: string) => void;
 }
 
 function getScoreColor(score: number): string {
@@ -129,9 +129,9 @@ export function AISearchResults({ recommendations, loading, query, onViewBook, o
                         size="sm"
                         variant="default"
                         onClick={() => {
-                          const matchedChapterId = rec.chapters?.[0]?.id;
-                          if (matchedChapterId && onViewChapter) {
-                            onViewChapter(rec.bookId, matchedChapterId);
+                          const matchedChapter = rec.chapters?.[0];
+                          if (matchedChapter && onViewChapter) {
+                            onViewChapter(rec.bookId, matchedChapter.id, matchedChapter.title);
                             return;
                           }
                           onViewBook(rec.bookId, rec.title);
@@ -154,7 +154,7 @@ export function AISearchResults({ recommendations, loading, query, onViewBook, o
                           {rec.chapters.slice(0, 3).map((ch, ci) => (
                             <button
                               key={ch.id + ci}
-                              onClick={() => onViewChapter?.(rec.bookId, ch.id)}
+                              onClick={() => onViewChapter?.(rec.bookId, ch.id, ch.title)}
                               className="flex items-start gap-2 w-full text-left px-3 py-2 rounded-lg hover:bg-accent/5 transition-colors group/ch"
                             >
                               <FileText className="h-3.5 w-3.5 text-accent mt-0.5 flex-shrink-0" />

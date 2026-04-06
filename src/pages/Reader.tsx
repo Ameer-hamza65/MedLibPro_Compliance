@@ -86,6 +86,11 @@ function findMatchingPdfTocItem(items: PdfTocItem[], currentPage: number): PdfTo
   return active;
 }
 
+function clampOutlinePanelSize(size: number) {
+  if (!Number.isFinite(size)) return 20;
+  return Math.max(12, Math.min(35, size));
+}
+
 export default function Reader() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -170,17 +175,27 @@ export default function Reader() {
   }, [book, bookId, chapterId, chapter, navigate, useNativeRenderer]);
 
   useEffect(() => {
-    const viewport = document.querySelector('[data-radix-scroll-area-viewport]');
+    if (useNativeRenderer) return;
+
+    const viewport = document.querySelector('[data-reader-content-scroll] [data-radix-scroll-area-viewport]');
     if (viewport instanceof HTMLElement) {
       viewport.scrollTo({ top: 0, left: 0, behavior: 'auto' });
     }
-  }, [bookId, chapterId]);
+  }, [bookId, chapterId, useNativeRenderer]);
 
   // Reading preferences (font, theme, focus mode)
   const { prefs, updatePrefs } = useReadingPrefs();
 
   const [rightPanel, setRightPanel] = useState<string | null>(null);
   const [showOutline, setShowOutline] = useState(true);
+  const outlineWidthRef = useRef(
+    clampOutlinePanelSize(
+      typeof window !== 'undefined'
+        ? Number(sessionStorage.getItem('reader-outline-width') ?? 20)
+        : 20,
+    ),
+  );
+  const [isOutlineDragging, setIsOutlineDragging] = useState(false);
   const [isSplitScreen, setIsSplitScreen] = useState(false);
   const [activeChunkIndex, setActiveChunkIndex] = useState<number | null>(null);
   const [viewedChunks, setViewedChunks] = useState<Set<number>>(new Set([0]));
@@ -195,27 +210,36 @@ export default function Reader() {
   const [epubVisibleText, setEpubVisibleText] = useState<string>('');
   const [epubCurrentHref, setEpubCurrentHref] = useState<string>('');
   const epubNavigationNonceRef = useRef(0);
-  const [epubNavigationRequest, setEpubNavigationRequest] = useState<{ href: string; nonce: number } | null>(null);
+  const [epubNavigationRequest, setEpubNavigationRequest] = useState<{ bookId: string; href: string; nonce: number } | null>(null);
 
   // PDF.js specific state
   const [pdfToc, setPdfToc] = useState<PdfTocItem[]>([]);
   const [pdfVisibleText, setPdfVisibleText] = useState<string>('');
   const [pdfCurrentPage, setPdfCurrentPage] = useState<number>(1);
+  const [pdfNavigationNonce, setPdfNavigationNonce] = useState(0);
 
   const requestEpubNavigation = useCallback((href: string) => {
-    if (!href) return;
+    if (!href || !book) return;
     epubNavigationNonceRef.current += 1;
-    setEpubNavigationRequest({ href, nonce: epubNavigationNonceRef.current });
-  }, []);
+    setEpubNavigationRequest({ bookId: book.id, href, nonce: epubNavigationNonceRef.current });
+  }, [book]);
 
   useEffect(() => {
-    if (!useEpubJs || !epubChapterHref) {
-      setEpubNavigationRequest(null);
-      return;
-    }
+    epubNavigationNonceRef.current = 0;
+    setEpubNavigationRequest(null);
+    setEpubCurrentHref('');
+    hasInitializedEpubNavRef.current = false;
+  }, [bookId]);
 
+  // URL-sync effect — only for initial load / deep-link, not for TOC clicks
+  const hasInitializedEpubNavRef = useRef(false);
+  useEffect(() => {
+    if (!useEpubJs || !book || !epubChapterHref) return;
+    if (hasInitializedEpubNavRef.current) return;
+    hasInitializedEpubNavRef.current = true;
     requestEpubNavigation(epubChapterHref);
-  }, [useEpubJs, epubChapterHref, requestEpubNavigation]);
+    setEpubCurrentHref(epubChapterHref);
+  }, [useEpubJs, book, epubChapterHref, requestEpubNavigation]);
 
   const activeEpubTocItem = useMemo(
     () => (useEpubJs ? findMatchingEpubTocItem(epubToc, epubCurrentHref || epubChapterHref) : undefined),
@@ -351,6 +375,24 @@ export default function Reader() {
     setIsSplitScreen(prev => !prev);
   }, []);
 
+  const handleOutlineResize = useCallback((size: number) => {
+    const nextSize = clampOutlinePanelSize(size);
+    outlineWidthRef.current = nextSize;
+    sessionStorage.setItem('reader-outline-width', String(nextSize));
+  }, []);
+
+  useEffect(() => {
+    document.body.classList.toggle('resize-dragging', isOutlineDragging);
+    document.body.style.userSelect = isOutlineDragging ? 'none' : '';
+    document.body.style.cursor = isOutlineDragging ? 'col-resize' : '';
+
+    return () => {
+      document.body.classList.remove('resize-dragging');
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+  }, [isOutlineDragging]);
+
   const handleSplitNavigate = useCallback((bookId: string, chapterId: string) => {
     navigate(`/reader?book=${bookId}&chapter=${chapterId}`);
     setActiveChunkIndex(null);
@@ -384,17 +426,44 @@ export default function Reader() {
     trackEvent('ai_query');
   }, [trackEvent]);
 
-  // Sidebar quick AI ask
+  // Sidebar quick AI ask — with DB fallback when visible text is too short
   const handleSidebarAIAsk = useCallback(async (question: string) => {
     setSidebarAILoading(true);
     setSidebarAIAnswer(undefined);
     try {
-      const contextText = useEpubJs ? epubVisibleText : usePdfJs ? pdfVisibleText : (chapter?.content || '');
+      let contextText = useEpubJs ? epubVisibleText : usePdfJs ? pdfVisibleText : (chapter?.content || '');
+
+      // DB fallback: if visible text is too short, fetch from book_chapters
+      if (contextText.length < 200 && book?.id) {
+        try {
+          const { data: chapterRows } = await supabase
+            .from('book_chapters')
+            .select('content')
+            .eq('book_id', book.id)
+            .order('sort_order', { ascending: true })
+            .limit(3);
+          if (chapterRows && chapterRows.length > 0) {
+            contextText = chapterRows.map(r => r.content || '').join('\n\n').slice(0, 15000);
+          }
+        } catch { /* use whatever we have */ }
+      }
+
+      if (contextText.length < 50) {
+        setSidebarAIAnswer('Failed to load chapter content. Please wait for the chapter to fully load, then try again.');
+        return;
+      }
+
+      const chTitle = useEpubJs
+        ? (activeEpubTocItem?.label || 'Chapter')
+        : usePdfJs
+        ? (activePdfTocItem?.label || `Page ${pdfCurrentPage}`)
+        : (chapter?.title || '');
+
       const { data, error } = await supabase.functions.invoke('gemini-ai', {
         body: {
           prompt: question,
           chapterContent: contextText.slice(0, 15000),
-          chapterTitle: useEpubJs ? (epubToc.find(t => epubCurrentHref.includes(t.href))?.label || 'Chapter') : usePdfJs ? `Page ${pdfCurrentPage}` : (chapter?.title || ''),
+          chapterTitle: chTitle,
           bookTitle: book?.title || '',
           type: 'qa',
           bookId: book?.id || '',
@@ -403,13 +472,16 @@ export default function Reader() {
       });
       if (error) throw error;
       setSidebarAIAnswer(data?.content || data?.answer || 'No response received.');
-    } catch {
-      setSidebarAIAnswer('Failed to get AI response. Please try again.');
+    } catch (err: any) {
+      const msg = err?.message?.includes('429')
+        ? 'Rate limit exceeded. Please wait a moment and try again.'
+        : 'Failed to get AI response. Please try again.';
+      setSidebarAIAnswer(msg);
     } finally {
       setSidebarAILoading(false);
       trackEvent('ai_query');
     }
-  }, [useEpubJs, usePdfJs, epubVisibleText, pdfVisibleText, pdfCurrentPage, epubToc, epubCurrentHref, chapter, book, trackEvent]);
+  }, [useEpubJs, usePdfJs, epubVisibleText, pdfVisibleText, pdfCurrentPage, activeEpubTocItem, activePdfTocItem, chapter, book, trackEvent]);
 
   // Scroll to top of reader content
   const handleScrollToTop = useCallback(() => {
@@ -417,7 +489,8 @@ export default function Reader() {
     if (epubContainer) {
       epubContainer.scrollTo({ top: 0, behavior: 'smooth' });
     }
-    const viewport = document.querySelector('[data-radix-scroll-area-viewport]');
+
+    const viewport = document.querySelector('[data-reader-content-scroll] [data-radix-scroll-area-viewport]');
     if (viewport instanceof HTMLElement) {
       viewport.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -433,12 +506,12 @@ export default function Reader() {
   }, [book, useEpubJs, isAutoOpenFirstChapter, epubToc, navigate]);
 
   const handleEpubTocNavigate = useCallback((href: string) => {
-    if (!book) return;
+    if (!book || !href) return;
     requestEpubNavigation(href);
-    const encodedHref = encodeURIComponent(href);
-    navigate(`/reader?book=${book.id}&chapter=epub:${encodedHref}`);
     setEpubCurrentHref(href);
-  }, [book, navigate, requestEpubNavigation]);
+    // Use navigate with replace — the hasInitializedEpubNavRef guard prevents double-fire
+    navigate(`/reader?book=${book.id}&chapter=epub:${encodeURIComponent(href)}`, { replace: true });
+  }, [book, requestEpubNavigation, navigate]);
 
   const handlePdfTocNavigate = useCallback((item: PdfTocItem) => {
     if (!book) return;
@@ -447,6 +520,7 @@ export default function Reader() {
       : `pdf:${item.pageNumber}`;
     navigate(`/reader?book=${book.id}&chapter=${encodeURIComponent(chapterValue)}`);
     setPdfCurrentPage(item.pageNumber);
+    setPdfNavigationNonce(n => n + 1);
   }, [book, navigate]);
 
   if (!chapter && !useNativeRenderer) {
@@ -491,8 +565,8 @@ export default function Reader() {
         fontFamily={prefs.fontFamily}
         theme={prefs.theme}
         focusMode={prefs.focusMode}
-        navigateToHref={epubNavigationRequest?.href || epubChapterHref}
-        navigateRequestKey={epubNavigationRequest?.nonce}
+        navigateToHref={epubNavigationRequest?.bookId === book.id ? epubNavigationRequest.href : epubChapterHref}
+        navigateRequestKey={epubNavigationRequest?.bookId === book.id ? epubNavigationRequest.nonce : undefined}
         onTocLoaded={setEpubToc}
         onChapterChange={setEpubCurrentHref}
         onVisibleTextChange={setEpubVisibleText}
@@ -515,6 +589,7 @@ export default function Reader() {
         fontSize={prefs.fontSize}
         theme={prefs.theme}
         navigateToPage={pdfTargetPage}
+        navigationNonce={pdfNavigationNonce}
         onTocLoaded={setPdfToc}
         onPageChange={setPdfCurrentPage}
         onVisibleTextChange={setPdfVisibleText}
@@ -527,7 +602,7 @@ export default function Reader() {
 
   // Legacy content area (server-parsed HTML)
   const legacyContentAreaJsx = (
-    <ScrollArea className={cn('h-full', contentStyles.className)} onScrollCapture={handleScroll as any}>
+    <ScrollArea data-reader-content-scroll className={cn('h-full', contentStyles.className)} onScrollCapture={handleScroll as any}>
       <div className="p-8 max-w-4xl mx-auto" style={contentStyles.style}>
         {/* Chapter title header */}
         {!isBookInfoPage && (
@@ -626,6 +701,76 @@ export default function Reader() {
     )
     : legacyContentAreaJsx;
 
+  const centerPanelJsx = (
+    <div className={cn('flex h-full min-w-0 flex-1', isOutlineDragging && 'pointer-events-none select-none')}>
+      <div className="flex-1 min-w-0">
+        {isSplitScreen ? (
+          <ResizablePanelGroup direction="horizontal" className="h-full">
+            <ResizablePanel defaultSize={60} minSize={35}>
+              {contentAreaJsx}
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={40} minSize={25}>
+              <SplitSearchPanel
+                currentBookId={book.id}
+                currentChapterId={chapter?.id || ''}
+                onNavigateChapter={handleSplitNavigate}
+                onClose={handleToggleSplitScreen}
+              />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        ) : (
+          contentAreaJsx
+        )}
+      </div>
+
+      {rightPanel && !isSplitScreen && (
+        <div className="w-80 border-l border-border/50 bg-card/50 flex flex-col flex-shrink-0">
+          <div className="flex items-center justify-end p-1 border-b border-border/50">
+            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setRightPanel(null)}>
+              <X className="h-3 w-3" />
+            </Button>
+          </div>
+          <div className="flex-1 overflow-hidden">
+            {rightPanel === 'ai' && (
+              <AIPanel
+                chapterTitle={aiChapterTitle}
+                chapterContent={aiChapterContent}
+                bookTitle={book.title}
+                bookId={book.id}
+                chapterId={chapter?.id || ''}
+                onAIQuery={handleAIQuery}
+              />
+            )}
+            {rightPanel === 'analytics' && (
+              <AnalyticsPanel
+                stats={stats}
+                formattedTime={formatTime(stats.totalTimeSeconds)}
+                totalChunks={useNativeRenderer ? 1 : chunks.length}
+                viewedChunks={useNativeRenderer ? 1 : viewedChunks.size}
+                bookTitle={book.title}
+                chapterTitle={chapter?.title || ''}
+              />
+            )}
+            {rightPanel === 'highlights' && (
+              <HighlightsPanel
+                highlights={highlights}
+                annotations={annotations}
+                bookmarks={bookmarks}
+                highlightColors={highlightColors}
+                activeColor={activeHighlightColor}
+                onColorChange={setActiveHighlightColor}
+                onRemoveHighlight={removeHighlight}
+                onRemoveAnnotation={removeAnnotation}
+                onJumpToChunk={handleJumpToChunk}
+              />
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="h-[calc(100vh-64px)] flex flex-col bg-background">
       {/* Reading progress bar at very top */}
@@ -697,27 +842,45 @@ export default function Reader() {
           )}
         </div>
 
-        {/* Right: tools */}
-        <div className="flex items-center gap-0.5 flex-shrink-0">
-          {/* Reading Preferences popover */}
-          <div className="hidden md:flex items-center gap-0.5 border-r border-border/50 pr-1 mr-1">
-            <ReadingPreferences prefs={prefs} onUpdate={updatePrefs} />
-            
-            {/* Focus mode quick toggle */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant={prefs.focusMode ? 'secondary' : 'ghost'}
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => updatePrefs({ focusMode: !prefs.focusMode })}
-                >
-                  {prefs.focusMode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{prefs.focusMode ? 'Exit Focus Mode' : 'Focus Mode'}</TooltipContent>
-            </Tooltip>
-          </div>
+          {/* Right: tools */}
+          <div className="flex items-center gap-0.5 flex-shrink-0">
+            {/* Reading Preferences popover + quick controls */}
+            <div className="hidden md:flex items-center gap-0.5 border-r border-border/50 pr-1 mr-1">
+              <ReadingPreferences prefs={prefs} onUpdate={updatePrefs} />
+
+              {/* Font size quick controls */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => updatePrefs({ fontSize: Math.max(12, prefs.fontSize - 1) })}>
+                    <ZoomOut className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Decrease Font Size ({prefs.fontSize}px)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => updatePrefs({ fontSize: Math.min(24, prefs.fontSize + 1) })}>
+                    <ZoomIn className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Increase Font Size ({prefs.fontSize}px)</TooltipContent>
+              </Tooltip>
+
+              {/* Focus mode quick toggle */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={prefs.focusMode ? 'secondary' : 'ghost'}
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => updatePrefs({ focusMode: !prefs.focusMode })}
+                  >
+                    {prefs.focusMode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{prefs.focusMode ? 'Exit Focus Mode' : 'Focus Mode'}</TooltipContent>
+              </Tooltip>
+            </div>
 
           <Tooltip>
             <TooltipTrigger asChild>
@@ -757,7 +920,10 @@ export default function Reader() {
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigator.clipboard.writeText(window.location.href)}>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => {
+                navigator.clipboard.writeText(window.location.href);
+                import('@/hooks/use-toast').then(({ toast }) => toast({ title: 'Link copied', description: 'Reading location URL copied to clipboard.' }));
+              }}>
                 <Share2 className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
@@ -786,98 +952,50 @@ export default function Reader() {
 
       {/* Main area: Outline (left) | Content (center) | Right panel */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: Outline sidebar */}
-        {showOutline && (
-          <div className={cn(
-            'w-72 flex-shrink-0 hidden md:block transition-all duration-300',
-            prefs.focusMode && 'opacity-30 hover:opacity-100'
-          )}>
-            <OutlineSidebar
-              book={book}
-              currentChapterId={useNativeRenderer ? (chapterId || '__book-info__') : (chapter?.id || '')}
-              currentChapterContent={chapter?.content}
-              onSelectChapter={handleNavigateChapter}
-              onScrollToHeading={handleScrollToHeading}
-              epubToc={useEpubJs ? epubToc : undefined}
-              epubCurrentHref={useEpubJs ? epubCurrentHref : undefined}
-              onEpubNavigate={useEpubJs ? handleEpubTocNavigate : undefined}
-              pdfToc={usePdfJs ? pdfToc : undefined}
-              pdfCurrentPage={usePdfJs ? pdfCurrentPage : undefined}
-              onPdfNavigate={usePdfJs ? handlePdfTocNavigate : undefined}
-              onAIAsk={handleSidebarAIAsk}
-              aiLoading={sidebarAILoading}
-              aiLastAnswer={sidebarAIAnswer}
+        {/* Left: Outline sidebar (resizable) */}
+        {showOutline ? (
+          <ResizablePanelGroup direction="horizontal" className="h-full w-full">
+            <ResizablePanel
+              defaultSize={outlineWidthRef.current}
+              minSize={12}
+              maxSize={35}
+              onResize={handleOutlineResize}
+              className="hidden md:flex"
+            >
+              <div className={cn('w-full h-full', prefs.focusMode && 'opacity-30 hover:opacity-100 transition-opacity')}>
+                <OutlineSidebar
+                  book={book}
+                  currentChapterId={useNativeRenderer ? (chapterId || '__book-info__') : (chapter?.id || '')}
+                  currentChapterContent={chapter?.content}
+                  onSelectChapter={handleNavigateChapter}
+                  onScrollToHeading={handleScrollToHeading}
+                  epubToc={useEpubJs ? epubToc : undefined}
+                  epubCurrentHref={useEpubJs ? epubCurrentHref : undefined}
+                  onEpubNavigate={useEpubJs ? handleEpubTocNavigate : undefined}
+                  pdfToc={usePdfJs ? pdfToc : undefined}
+                  pdfCurrentPage={usePdfJs ? pdfCurrentPage : undefined}
+                  onPdfNavigate={usePdfJs ? handlePdfTocNavigate : undefined}
+                  onAIAsk={handleSidebarAIAsk}
+                  aiLoading={sidebarAILoading}
+                  aiLastAnswer={sidebarAIAnswer}
+                />
+              </div>
+            </ResizablePanel>
+
+            <ResizableHandle
+              withHandle
+              hitAreaMargins={{ coarse: 20, fine: 12 }}
+              onDragging={setIsOutlineDragging}
+              className="hidden w-6 bg-transparent after:w-6 after:bg-transparent hover:bg-accent/10 data-[resize-handle-state=hover]:bg-accent/10 data-[resize-handle-state=drag]:bg-accent/20 md:flex [&>div]:h-8 [&>div]:w-4 [&>div]:rounded-full [&>div]:border-border/70 [&>div]:bg-background/95 [&>div]:shadow-sm [&>div>svg]:h-3.5 [&>div>svg]:w-3.5 [&>div>svg]:text-muted-foreground"
             />
-          </div>
-        )}
 
-        {/* Center: Content */}
-        <div className="flex-1 min-w-0">
-          {isSplitScreen ? (
-            <ResizablePanelGroup direction="horizontal" className="h-full">
-              <ResizablePanel defaultSize={60} minSize={35}>
-                {contentAreaJsx}
-              </ResizablePanel>
-              <ResizableHandle withHandle />
-              <ResizablePanel defaultSize={40} minSize={25}>
-                <SplitSearchPanel
-                  currentBookId={book.id}
-                  currentChapterId={chapter?.id || ''}
-                  onNavigateChapter={handleSplitNavigate}
-                  onClose={handleToggleSplitScreen}
-                />
-              </ResizablePanel>
-            </ResizablePanelGroup>
-          ) : (
-            contentAreaJsx
-          )}
-        </div>
+            <ResizablePanel defaultSize={100 - outlineWidthRef.current} minSize={30} className="min-w-0">
+              {centerPanelJsx}
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        ) : null}
 
-        {/* Right: Tools panel */}
-        {rightPanel && !isSplitScreen && (
-          <div className="w-80 border-l border-border/50 bg-card/50 flex flex-col flex-shrink-0">
-            <div className="flex items-center justify-end p-1 border-b border-border/50">
-              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setRightPanel(null)}>
-                <X className="h-3 w-3" />
-              </Button>
-            </div>
-            <div className="flex-1 overflow-hidden">
-              {rightPanel === 'ai' && (
-                <AIPanel
-                  chapterTitle={aiChapterTitle}
-                  chapterContent={aiChapterContent}
-                  bookTitle={book.title}
-                  bookId={book.id}
-                  chapterId={chapter?.id || ''}
-                  onAIQuery={handleAIQuery}
-                />
-              )}
-              {rightPanel === 'analytics' && (
-                <AnalyticsPanel
-                  stats={stats}
-                  formattedTime={formatTime(stats.totalTimeSeconds)}
-                  totalChunks={useNativeRenderer ? 1 : chunks.length}
-                  viewedChunks={useNativeRenderer ? 1 : viewedChunks.size}
-                  bookTitle={book.title}
-                  chapterTitle={chapter?.title || ''}
-                />
-              )}
-              {rightPanel === 'highlights' && (
-                <HighlightsPanel
-                  highlights={highlights}
-                  annotations={annotations}
-                  bookmarks={bookmarks}
-                  highlightColors={highlightColors}
-                  activeColor={activeHighlightColor}
-                  onColorChange={setActiveHighlightColor}
-                  onRemoveHighlight={removeHighlight}
-                  onRemoveAnnotation={removeAnnotation}
-                  onJumpToChunk={handleJumpToChunk}
-                />
-              )}
-            </div>
-          </div>
-        )}
+        {!showOutline && centerPanelJsx}
       </div>
     </div>
   );
