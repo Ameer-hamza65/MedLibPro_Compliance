@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { 
   Sparkles, Send, AlertCircle, BookOpen, 
   ClipboardList, Loader2, RefreshCw, Clock, Lock, Crown
@@ -37,8 +37,6 @@ export function AIPanel({ chapterTitle, chapterContent, bookTitle, bookId, chapt
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [monthlyQueryCount, setMonthlyQueryCount] = useState(0);
-  const [deepContext, setDeepContext] = useState<string | null>(null);
-  const deepContextFetched = useRef<string | null>(null);
   const { toast } = useToast();
   const { currentTier, currentEnterprise, isEnterpriseMode } = useEnterprise();
   const { user } = useUser();
@@ -61,27 +59,7 @@ export function AIPanel({ chapterTitle, chapterContent, bookTitle, bookId, chapt
     fetchQueryCount();
   }, [currentEnterprise]);
 
-  // Lazy fetch deeper chapter context when needed
-  const fetchDeepContext = useCallback(async () => {
-    if (deepContextFetched.current === bookId || deepContext) return deepContext;
-    
-    try {
-      const { data, error } = await supabase.functions.invoke('extract-epub-chapters', {
-        body: { bookId },
-      });
-      
-      if (!error && data?.chapters?.length > 0) {
-        const allText = data.chapters.map((ch: any) => ch.content).join('\n\n');
-        const capped = allText.substring(0, 30000); // Cap total context
-        setDeepContext(capped);
-        deepContextFetched.current = bookId;
-        return capped;
-      }
-    } catch (err) {
-      console.warn('Deep context fetch failed, using visible text:', err);
-    }
-    return null;
-  }, [bookId, deepContext]);
+  // No longer needed — context is pre-resolved by the shared useChapterContext hook in Reader.tsx
 
   const remainingQueries = currentTier 
     ? getRemainingAIQueries(currentTier.id, monthlyQueryCount)
@@ -116,27 +94,8 @@ export function AIPanel({ chapterTitle, chapterContent, bookTitle, bookId, chapt
     onAIQuery();
 
     try {
-      // Use visible text first; if short, try fetching from book_chapters table
+      // Context is pre-resolved by the shared useChapterContext hook — use it directly
       let contextText = chapterContent;
-      if (chapterContent.length < 200) {
-        const deep = await fetchDeepContext();
-        if (deep) {
-          contextText = deep;
-        } else {
-          // Direct DB fallback
-          try {
-            const { data: chapterRows } = await supabase
-              .from('book_chapters')
-              .select('content')
-              .eq('book_id', bookId)
-              .order('sort_order', { ascending: true })
-              .limit(3);
-            if (chapterRows && chapterRows.length > 0) {
-              contextText = chapterRows.map((r: any) => r.content || '').join('\n\n').slice(0, 15000);
-            }
-          } catch { /* use whatever we have */ }
-        }
-      }
 
       if (contextText.length < 50) {
         const errorMsg: AIMessage = {
@@ -186,7 +145,7 @@ export function AIPanel({ chapterTitle, chapterContent, bookTitle, bookId, chapt
     } finally {
       setIsLoading(false);
     }
-  }, [chapterContent, chapterTitle, bookTitle, bookId, chapterId, onAIQuery, toast, isLimitReached, quickActions, fetchDeepContext, user]);
+  }, [chapterContent, chapterTitle, bookTitle, bookId, chapterId, onAIQuery, toast, isLimitReached, quickActions, user]);
 
   const handleReset = useCallback(() => {
     setMessages([]);

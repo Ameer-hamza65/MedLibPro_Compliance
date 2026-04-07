@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useChapterContext } from '@/hooks/useChapterContext';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, X, BookOpen, Bookmark, BookmarkCheck, Share2, MessageSquare, BarChart3, Highlighter, ZoomIn, ZoomOut, PanelRightOpen, PanelRightClose, ChevronLeft, ChevronRight, PanelLeftOpen, PanelLeftClose, Eye, EyeOff, ArrowUp, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -426,48 +427,42 @@ export default function Reader() {
     trackEvent('ai_query');
   }, [trackEvent]);
 
-  // Sidebar quick AI ask — with DB fallback when visible text is too short
+  // Shared chapter context resolver — used by BOTH the left sidebar AI and the right AI panel
+  const rawVisibleText = useEpubJs ? epubVisibleText : usePdfJs ? pdfVisibleText : (chapter?.content || '');
+  const rawTocLabel = useEpubJs
+    ? (activeEpubTocItem?.label || '')
+    : usePdfJs
+    ? (activePdfTocItem?.label || `Page ${pdfCurrentPage}`)
+    : '';
+  const { resolvedContent: aiChapterContent, resolvedTitle: aiChapterTitle } = useChapterContext({
+    bookId: book?.id,
+    epubCurrentHref: useEpubJs ? epubCurrentHref : '',
+    tocLabel: rawTocLabel,
+    chapterTitle: chapter?.title || '',
+    visibleText: rawVisibleText,
+  });
+
+  // Sidebar quick AI ask — uses the same shared resolved context as the right AI panel
   const handleSidebarAIAsk = useCallback(async (question: string) => {
     setSidebarAILoading(true);
     setSidebarAIAnswer(undefined);
     try {
-      let contextText = useEpubJs ? epubVisibleText : usePdfJs ? pdfVisibleText : (chapter?.content || '');
-
-      // DB fallback: if visible text is too short, fetch from book_chapters
-      if (contextText.length < 200 && book?.id) {
-        try {
-          const { data: chapterRows } = await supabase
-            .from('book_chapters')
-            .select('content')
-            .eq('book_id', book.id)
-            .order('sort_order', { ascending: true })
-            .limit(3);
-          if (chapterRows && chapterRows.length > 0) {
-            contextText = chapterRows.map(r => r.content || '').join('\n\n').slice(0, 15000);
-          }
-        } catch { /* use whatever we have */ }
-      }
-
-      if (contextText.length < 50) {
-        setSidebarAIAnswer('Failed to load chapter content. Please wait for the chapter to fully load, then try again.');
+      if (aiChapterContent.length < 50) {
+        setSidebarAIAnswer('Chapter content is still loading. Please wait a moment and try again.');
         return;
       }
-
-      const chTitle = useEpubJs
-        ? (activeEpubTocItem?.label || 'Chapter')
-        : usePdfJs
-        ? (activePdfTocItem?.label || `Page ${pdfCurrentPage}`)
-        : (chapter?.title || '');
 
       const { data, error } = await supabase.functions.invoke('gemini-ai', {
         body: {
           prompt: question,
-          chapterContent: contextText.slice(0, 15000),
-          chapterTitle: chTitle,
+          chapterContent: aiChapterContent.slice(0, 15000),
+          chapterTitle: aiChapterTitle || chapter?.title || 'Chapter',
           bookTitle: book?.title || '',
-          type: 'qa',
+          type: 'default',
           bookId: book?.id || '',
           chapterId: chapter?.id || '',
+          userId: user.id || null,
+          enterpriseId: user.enterpriseId || null,
         },
       });
       if (error) throw error;
@@ -475,13 +470,15 @@ export default function Reader() {
     } catch (err: any) {
       const msg = err?.message?.includes('429')
         ? 'Rate limit exceeded. Please wait a moment and try again.'
+        : err?.message?.includes('402')
+        ? 'AI usage limit reached. Contact your administrator.'
         : 'Failed to get AI response. Please try again.';
       setSidebarAIAnswer(msg);
     } finally {
       setSidebarAILoading(false);
       trackEvent('ai_query');
     }
-  }, [useEpubJs, usePdfJs, epubVisibleText, pdfVisibleText, pdfCurrentPage, activeEpubTocItem, activePdfTocItem, chapter, book, trackEvent]);
+  }, [aiChapterContent, aiChapterTitle, chapter, book, trackEvent, user]);
 
   // Scroll to top of reader content
   const handleScrollToTop = useCallback(() => {
@@ -542,13 +539,6 @@ export default function Reader() {
 
   const contentStyles = getContentStyles(prefs);
 
-  // Get the chapter content for AI — either from native renderer visible text or DB content
-  const aiChapterContent = useEpubJs ? epubVisibleText : usePdfJs ? pdfVisibleText : (chapter?.content || '');
-  const aiChapterTitle = useEpubJs
-    ? (activeEpubTocItem?.label || chapter?.title || 'Chapter')
-    : usePdfJs
-    ? (activePdfTocItem?.label || `Page ${pdfCurrentPage}`)
-    : (chapter?.title || '');
 
   // EPUB.js content area — always mount when useEpubJs so TOC loads
   // Use opacity+pointer-events instead of display:none so container has dimensions

@@ -549,6 +549,14 @@ export function OutlineSidebar({
         </div>
       </div>
 
+      {/* AI Assistant - Ask about this chapter */}
+      {onAIAsk && (
+        <SidebarAIInput
+          onAsk={onAIAsk}
+          isLoading={aiLoading}
+          lastAnswer={aiLastAnswer}
+        />
+      )}
 
       {/* OUTLINE label + Open all / Close all */}
       <div className="px-4 py-2 flex items-center justify-between border-b border-border/30">

@@ -14,13 +14,12 @@ const REPOSITORY_GUARDRAIL = `CRITICAL INSTRUCTIONS — YOU MUST FOLLOW THESE RU
 4. Never fabricate regulatory codes, standards, or citations. Only extract what is explicitly stated in the content.
 5. All responses are for educational reference only and do not constitute legal or medical advice.`;
 
-function buildSystemPrompt(type: string, chapterTitle: string, bookTitle: string, contentSnippet: string): string {
+function buildSystemPrompt(type: string, chapterTitle: string, bookTitle: string): string {
   const guardrail = REPOSITORY_GUARDRAIL.replace("{bookTitle}", bookTitle).replace("{chapterTitle}", chapterTitle);
-  const baseContext = `\n\nChapter: "${chapterTitle}" from "${bookTitle}"\n\nChapter Content:\n${contentSnippet}`;
 
   switch (type) {
     case "summary":
-      return `${guardrail}\n\nYou are a medical education AI assistant. Summarize the following medical textbook chapter in a well-structured format. Include:\n- A brief overview (2-3 sentences)\n- Core Concepts (bullet points)\n- Clinical Significance\n- Key Takeaways (numbered list)\n\n[Source: "${bookTitle}" — Chapter: "${chapterTitle}"]${baseContext}`;
+      return `${guardrail}\n\nYou are a medical education AI assistant. Summarize the provided medical textbook chapter in a well-structured format. Include:\n- A brief overview (2-3 sentences)\n- Core Concepts (bullet points)\n- Clinical Significance\n- Key Takeaways (numbered list)`;
 
     case "compliance":
       return `${guardrail}\n\nYou are a clinical compliance AI assistant specialized in healthcare regulatory compliance. Extract ALL compliance-relevant points from this chapter. Structure your response as follows:
@@ -50,15 +49,13 @@ For each applicable standard, provide:
 - Common audit findings related to this content
 - Recommended corrective actions
 
-Each point must include a severity level and cite the source chapter.
-
-[Source: "${bookTitle}" — Chapter: "${chapterTitle}"]${baseContext}`;
+Each point must include a severity level and cite the source chapter.`;
 
     case "qa":
-      return `${guardrail}\n\nYou are a pharmacology AI assistant. Analyze medications and drug interactions from this chapter. Include:\n- Key Drug Considerations\n- Common Interactions to Watch (numbered)\n- Monitoring Parameters\n- Dosage Guidelines if applicable\n\n[Source: "${bookTitle}" — Chapter: "${chapterTitle}"]${baseContext}`;
+      return `${guardrail}\n\nYou are a pharmacology AI assistant. Analyze medications and drug interactions from this chapter. Include:\n- Key Drug Considerations\n- Common Interactions to Watch (numbered)\n- Monitoring Parameters\n- Dosage Guidelines if applicable`;
 
     case "general":
-      return `${guardrail}\n\nYou are a medical education AI assistant. Create a concise study guide for this chapter. Include:\n- Learning Objectives\n- Key Terms and Definitions\n- Important Concepts for Exam Preparation\n- Clinical Application Points\n- Review Questions (2-3)\n\n[Source: "${bookTitle}" — Chapter: "${chapterTitle}"]${baseContext}`;
+      return `${guardrail}\n\nYou are a medical education AI assistant. Create a concise study guide for this chapter. Include:\n- Learning Objectives\n- Key Terms and Definitions\n- Important Concepts for Exam Preparation\n- Clinical Application Points\n- Review Questions (2-3)`;
 
     case "search":
       return `You are an expert compliance library search assistant. The user is searching across a medical compliance library. Your job is to understand the USER'S INTENT and find ALL relevant books — even if the exact keywords don't appear in the catalog.
@@ -98,12 +95,10 @@ Rules:
 - relevanceScore 0-100: direct match 80-100, contextual 50-79, tangential 30-49
 - Order by relevanceScore descending
 - Maximum 8 results
-- If truly nothing matches, return []
-
-Catalog data:\n${contentSnippet}`;
+- If truly nothing matches, return []`;
 
     default:
-      return `${guardrail}\n\nYou are a medical education AI assistant. Answer the user's question accurately based ONLY on the provided chapter content. If the answer is not in the content, say so clearly.\n\n[Source: "${bookTitle}" — Chapter: "${chapterTitle}"]${baseContext}`;
+      return `${guardrail}\n\nYou are a medical education AI assistant. Answer the user's question accurately based ONLY on the provided chapter content. If the answer is not in the content, say so clearly.`;
   }
 }
 
@@ -115,34 +110,37 @@ serve(async (req) => {
   try {
     const { prompt, chapterContent, chapterTitle, bookTitle, type, bookId, chapterId, userId, enterpriseId } = await req.json();
 
+    // 1. INCREASED CONTEXT LIMIT: 100k characters (~25,000 tokens)
+    const contentSnippet = chapterContent?.slice(0, type === "search" ? 12000 : 20000) || "";
+    const systemPrompt = buildSystemPrompt(type || "default", chapterTitle || "", bookTitle || "");
+    const rawUserPrompt = prompt || "Please analyze this chapter.";
+
+    // 2. SANDWICH METHOD: Force the AI to read the text immediately before the question
+    const userMessage = type === "search"
+      ? `Catalog Data:\n${contentSnippet}\n\nSearch Query: ${rawUserPrompt}`
+      : `[Source: "${bookTitle}" — Chapter: "${chapterTitle}"]\n\n--- CHAPTER CONTENT ---\n${contentSnippet}\n--- END CONTENT ---\n\nBased ONLY on the text above, answer this: ${rawUserPrompt}`;
+
+    const startTime = Date.now();
+    let response;
+    let data;
+    let modelUsed = "gemini-2.5-flash"; // Specific Gemini version requested
+
     const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
     
     if (!GEMINI_API_KEY) {
-      return new Response(JSON.stringify({ error: "No AI API key configured. Please set GEMINI_API_KEY in Supabase secrets or local .env." }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      throw new Error("No AI API key configured. Please set GEMINI_API_KEY.");
     }
 
-    const contentSnippet = chapterContent?.slice(0, type === "search" ? 12000 : 4000) || "";
-    const systemPrompt = buildSystemPrompt(type || "default", chapterTitle || "", bookTitle || "", contentSnippet);
-    const userMessage = prompt || "Please analyze this chapter.";
-
-    const startTime = Date.now();
-
-    // Direct Google Gemini API setup using the OpenAI compatibility layer
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`;
-    const headers = {
-      "Authorization": `Bearer ${GEMINI_API_KEY}`, 
-      "Content-Type": "application/json",
-    };
-    const model = "gemini-2.5-flash";
-
-    const response = await fetch(apiUrl, {
+    // --- 3. PRIMARY ATTEMPT: GEMINI ---
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`;
+    response = await fetch(geminiUrl, {
       method: "POST",
-      headers,
+      headers: {
+        "Authorization": `Bearer ${GEMINI_API_KEY}`, 
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({
-        model,
+        model: modelUsed,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userMessage },
@@ -153,14 +151,45 @@ serve(async (req) => {
       }),
     });
 
+    // --- 4. FALLBACK ATTEMPT: GROQ ---
+    if (!response.ok) {
+      console.warn(`Gemini failed with status ${response.status}. Attempting Groq fallback...`);
+      const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
+
+      if (GROQ_API_KEY) {
+        modelUsed = "llama-3.3-70b-versatile"; // Excellent, fast Groq model with 128k context
+        
+        response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${GROQ_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: modelUsed,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userMessage },
+            ],
+            temperature: type === "search" ? 0.2 : 0.4,
+            max_tokens: 2048,
+            ...(type === "search" ? { response_format: { type: "json_object" } } : {}),
+          }),
+        });
+      } else {
+        console.error("Groq fallback aborted: GROQ_API_KEY not found in Supabase secrets.");
+      }
+    }
+
     const responseTimeMs = Date.now() - startTime;
 
+    // --- 5. FINAL ERROR CHECK ---
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Gemini API error:", response.status, errorText);
+      console.error(`${modelUsed} API error:`, response.status, errorText);
       
       if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }), {
+        return new Response(JSON.stringify({ error: "Rate limit exceeded on all available AI services. Please try again in a moment." }), {
           status: 429,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
@@ -171,11 +200,12 @@ serve(async (req) => {
       });
     }
 
-    const data = await response.json();
+    // --- 6. PARSE SUCCESSFUL RESPONSE ---
+    data = await response.json();
     const content = data?.choices?.[0]?.message?.content || "No response generated.";
     const tokensUsed = data?.usage?.total_tokens || null;
 
-    // Log to Supabase Database
+    // --- 7. LOG TO SUPABASE ---
     try {
       const supabaseUrl = Deno.env.get("SUPABASE_URL");
       const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -192,7 +222,7 @@ serve(async (req) => {
           user_prompt: prompt || null,
           ai_response: content.slice(0, 10000),
           response_time_ms: responseTimeMs,
-          model_used: "gemini-2.5-flash",
+          model_used: modelUsed, // Dynamically tracks if Gemini or Groq was used
           tokens_used: tokensUsed,
           user_id: userId || null,
           enterprise_id: enterpriseId || null,
@@ -202,7 +232,7 @@ serve(async (req) => {
       console.error("Failed to log AI query:", logErr);
     }
 
-    // Parse structured JSON results if type is "search"
+    // --- 8. HANDLE 'SEARCH' JSON PARSING ---
     if (type === "search") {
       try {
         const parsed = JSON.parse(content);
@@ -242,6 +272,7 @@ serve(async (req) => {
       }
     }
 
+    // --- 9. RETURN STANDARD RESPONSE ---
     return new Response(JSON.stringify({ content, responseTimeMs }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

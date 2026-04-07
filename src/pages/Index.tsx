@@ -1,22 +1,50 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Book, TrendingUp, Shield, FolderOpen, ArrowRight, CheckCircle, Sparkles, Activity, Database } from 'lucide-react';
+import { Search, Book, TrendingUp, Shield, FolderOpen, ArrowRight, CheckCircle, Sparkles, Activity, Database, Type, Loader2 } from 'lucide-react';
 import { motion, useInView } from 'framer-motion';
 import { useRef } from 'react';
 import { SearchBar } from '@/components/SearchBar';
 import { TrendingTopics } from '@/components/TrendingTopics';
 import { AISearchResults } from '@/components/AISearchResults';
+import { BookCard } from '@/components/BookCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useUser } from '@/context/UserContext';
 import { useEnterprise } from '@/context/EnterpriseContext';
 import { useBooks } from '@/context/BookContext';
 import { useSearch } from '@/context/SearchContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { getBookMetadataRank, buildHighlightedSnippet, buildBookMetadataText } from '@/lib/libraryKeywordSearch';
 
+interface FTSChapterResult {
+  id: string;
+  book_id: string;
+  chapter_key: string;
+  title: string;
+  rank: number;
+  headline: string;
+  book_title: string;
+  book_specialty: string;
+  book_authors: string[];
+}
 
+interface FTSBookResult {
+  id: string;
+  title: string;
+  rank: number;
+  headline: string;
+}
+
+interface KeywordChapterRow {
+  id: string;
+  book_id: string;
+  chapter_key: string;
+  title: string;
+  content: string | null;
+}
 
 // Animated section wrapper
 function AnimatedSection({ children, className = '', delay = 0 }: { children: React.ReactNode; className?: string; delay?: number }) {
@@ -45,12 +73,123 @@ export default function Index() {
   const { search, setSearch, clearSearch } = useSearch();
   const [searchQuery, setSearchQuery] = useState(search.query);
   const [hasSearched, setHasSearched] = useState(search.hasSearched);
+  const [searchMode, setSearchMode] = useState<'keyword' | 'ai'>(search.mode);
   const [aiRecommendations, setAiRecommendations] = useState<Array<{ bookId: string; title: string; reason: string; specialty: string; collection?: string; relevanceScore?: number; chapters?: Array<{ id: string; title: string; reason: string }> }>>(search.aiResults);
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
+
+  // Keyword search state
+  const [ftsResults, setFtsResults] = useState<{ books: FTSBookResult[]; chapters: FTSChapterResult[] } | null>(null);
+  const [ftsLoading, setFtsLoading] = useState(false);
+
+  const booksById = useMemo(() => new Map(books.map(b => [b.id, b])), [books]);
+
+  // Keyword search effect (debounced)
+  useEffect(() => {
+    if (searchMode !== 'keyword' || !hasSearched) return;
+    const q = searchQuery.trim();
+    if (!q) { setFtsResults(null); return; }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setFtsLoading(true);
+
+      const metadataMatches = books
+        .map(book => {
+          const rank = getBookMetadataRank(book, q);
+          if (!rank) return null;
+          return { id: book.id, title: book.title, rank, headline: buildHighlightedSnippet(buildBookMetadataText(book), q, 90) };
+        })
+        .filter((r): r is FTSBookResult => Boolean(r))
+        .sort((a, b) => b.rank - a.rank)
+        .slice(0, 20);
+
+      if (!cancelled) setFtsResults({ books: metadataMatches, chapters: [] });
+
+      try {
+        const [titleRes, contentRes] = await Promise.all([
+          supabase.from('book_chapters').select('id, book_id, chapter_key, title, content').ilike('title', `%${q}%`).limit(20),
+          supabase.from('book_chapters').select('id, book_id, chapter_key, title, content').ilike('content', `%${q}%`).limit(20),
+        ]);
+
+        const chapterMap = new Map<string, FTSChapterResult>();
+        const rawChapters = [...((titleRes.data as KeywordChapterRow[] | null) || []), ...((contentRes.data as KeywordChapterRow[] | null) || [])];
+
+        rawChapters.forEach(chapter => {
+          const book = booksById.get(chapter.book_id);
+          if (!book) return;
+          const titleMatched = chapter.title.toLowerCase().includes(q.toLowerCase());
+          const contentMatched = (chapter.content || '').toLowerCase().includes(q.toLowerCase());
+          const rank = (titleMatched ? 2 : 0) + (contentMatched ? 1 : 0) + getBookMetadataRank(book, q) * 0.01;
+
+          const result: FTSChapterResult = {
+            id: chapter.id, book_id: chapter.book_id, chapter_key: chapter.chapter_key,
+            title: chapter.title, rank,
+            headline: buildHighlightedSnippet(`${chapter.title} ${chapter.content || ''}`, q, 110),
+            book_title: book.title, book_specialty: book.specialty, book_authors: book.authors,
+          };
+          const existing = chapterMap.get(chapter.id);
+          if (!existing || result.rank > existing.rank) chapterMap.set(chapter.id, result);
+        });
+
+        const chapters = Array.from(chapterMap.values()).sort((a, b) => b.rank - a.rank).slice(0, 20);
+
+        // Boost books that have chapter matches
+        const chapterBookBoosts = new Map<string, number>();
+        chapters.forEach(ch => chapterBookBoosts.set(ch.book_id, Math.max(chapterBookBoosts.get(ch.book_id) || 0, ch.rank * 30)));
+
+        const combinedBookMap = new Map(metadataMatches.map(b => [b.id, b]));
+        books.forEach(book => {
+          const boost = chapterBookBoosts.get(book.id) || 0;
+          if (!boost) return;
+          const baseRank = getBookMetadataRank(book, q);
+          const existing = combinedBookMap.get(book.id);
+          const rank = Math.max(existing?.rank || 0, baseRank + boost);
+          combinedBookMap.set(book.id, {
+            id: book.id, title: book.title, rank,
+            headline: existing?.headline || buildHighlightedSnippet(buildBookMetadataText(book), q, 90),
+          });
+        });
+
+        if (!cancelled) {
+          setFtsResults({
+            books: Array.from(combinedBookMap.values()).sort((a, b) => b.rank - a.rank).slice(0, 20),
+            chapters,
+          });
+        }
+      } catch {
+        // keep metadata results
+      } finally {
+        if (!cancelled) setFtsLoading(false);
+      }
+    }, 400);
+
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [searchQuery, searchMode, hasSearched, books, booksById]);
+
+  // Keyword book results merged with local book objects
+  const keywordBookResults = useMemo(() => {
+    if (!ftsResults) return [];
+    const bookIdSet = new Set(ftsResults.books.map(b => b.id));
+    ftsResults.chapters.forEach(ch => bookIdSet.add(ch.book_id));
+    const rankMap = new Map<string, number>();
+    ftsResults.books.forEach(b => rankMap.set(b.id, b.rank));
+    ftsResults.chapters.forEach(ch => {
+      const existing = rankMap.get(ch.book_id) || 0;
+      rankMap.set(ch.book_id, Math.max(existing, ch.rank * 0.8));
+    });
+    return books.filter(b => bookIdSet.has(b.id)).sort((a, b) => (rankMap.get(b.id) || 0) - (rankMap.get(a.id) || 0));
+  }, [books, ftsResults]);
 
   const handleSearch = useCallback(async (query: string, filters?: { publisher?: string; specialty?: string; edition?: string }) => {
     setSearchQuery(query);
     setHasSearched(true);
+
+    // For keyword mode, just set the query — the useEffect handles the rest
+    if (searchMode === 'keyword') {
+      setSearch({ query, mode: 'keyword', aiResults: [], hasSearched: true });
+      return;
+    }
+
     setAiSearchLoading(true);
     setAiRecommendations([]);
 
@@ -171,7 +310,7 @@ export default function Index() {
     } finally {
       setAiSearchLoading(false);
     }
-  }, [books, user.id, user.enterpriseId, toast, setSearch]);
+  }, [books, user.id, user.enterpriseId, toast, setSearch, searchMode]);
 
   const trackSearchClick = useCallback((bookId: string, bookTitle: string, source: 'regular' | 'ai', chapterId?: string) => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -189,18 +328,30 @@ export default function Index() {
     });
   }, [searchQuery]);
 
-  const handleViewChapter = useCallback((bookId: string, chapterId: string) => {
+  const handleViewChapter = useCallback((bookId: string, chapterId: string, chapterTitle?: string) => {
     const book = books.find(b => b.id === bookId);
     if (!book) return;
 
     trackSearchClick(book.id, book.title, 'ai', chapterId);
 
-    const normalizedChapterId = book.filePath && book.fileType === 'epub'
-      ? (chapterId.startsWith('epub:') ? chapterId : `epub:${encodeURIComponent(chapterId)}`)
-      : chapterId;
-
-    navigate(`/reader?book=${book.id}&chapter=${normalizedChapterId}`);
+    if (book.filePath && book.fileType === 'epub') {
+      const titleParam = chapterTitle ? `&chapterTitle=${encodeURIComponent(chapterTitle)}` : '';
+      navigate(`/reader?book=${bookId}&chapter=__find__${titleParam}`);
+    } else {
+      const normalizedChapterId = chapterId.startsWith('epub:') ? chapterId : chapterId;
+      navigate(`/reader?book=${book.id}&chapter=${normalizedChapterId}`);
+    }
   }, [books, navigate, trackSearchClick]);
+
+  const handleViewBookCard = useCallback((book: any) => {
+    if (book.filePath && book.fileType === 'epub') {
+      navigate(`/reader?book=${book.id}&chapter=__book-info__`);
+    } else if (book.tableOfContents?.length > 0) {
+      navigate(`/reader?book=${book.id}&chapter=${book.tableOfContents[0].id}`);
+    } else {
+      navigate(`/reader?book=${book.id}&chapter=__book-info__`);
+    }
+  }, [navigate]);
 
   const handleViewBook = useCallback((bookId: string, title?: string) => {
     let book = books.find(b => b.id === bookId);
@@ -312,42 +463,140 @@ export default function Index() {
       {/* Main Content */}
       <main className="container py-12">
         {hasSearched ? (
-          <div className="grid lg:grid-cols-4 gap-8">
-            <div className="lg:col-span-3 space-y-6">
-              <div className="flex items-center justify-between flex-wrap gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold text-foreground">AI Search Results</h2>
-                  <p className="text-muted-foreground">Searching for "{searchQuery}"</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <SearchBar onSearch={handleSearch} initialValue={searchQuery} className="hidden md:block w-80" />
-                  <Button variant="outline" size="sm" onClick={() => { setHasSearched(false); setAiRecommendations([]); clearSearch(); }}>
-                    Clear
-                  </Button>
-                </div>
+          <div className="space-y-6">
+            {/* Search Mode Toggle + Header */}
+            <div className="flex items-center justify-between flex-wrap gap-4">
+              <div>
+                <h2 className="text-2xl font-bold text-foreground">
+                  {searchMode === 'ai' ? 'AI Search Results' : 'Keyword Search Results'}
+                </h2>
+                <p className="text-muted-foreground">Searching for "{searchQuery}"</p>
               </div>
-
-              {/* AI Results — the only search results */}
-              <AISearchResults 
-                recommendations={aiRecommendations} 
-                loading={aiSearchLoading} 
-                query={searchQuery}
-                onViewBook={handleViewBook}
-                onViewChapter={handleViewChapter}
-              />
-
-              {!aiSearchLoading && aiRecommendations.length === 0 && (
-                <div className="text-center py-16 glass-card rounded-xl">
-                  <Search className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-xl font-semibold mb-2">No Results Found</h3>
-                  <p className="text-muted-foreground mb-6">Try rephrasing your query or using different terms</p>
-                  <Button onClick={() => { setHasSearched(false); clearSearch(); }}>Back to Home</Button>
-                </div>
-              )}
+              <div className="flex items-center gap-3">
+                <Tabs value={searchMode} onValueChange={(v) => {
+                  const newMode = v as 'keyword' | 'ai';
+                  setSearchMode(newMode);
+                  if (newMode === 'ai' && aiRecommendations.length === 0 && !aiSearchLoading) {
+                    handleSearch(searchQuery);
+                  }
+                }}>
+                  <TabsList>
+                    <TabsTrigger value="keyword" className="gap-1.5">
+                      <Type className="h-3.5 w-3.5" />
+                      Keyword
+                    </TabsTrigger>
+                    <TabsTrigger value="ai" className="gap-1.5">
+                      <Sparkles className="h-3.5 w-3.5" />
+                      AI Search
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                <Button variant="outline" size="sm" onClick={() => {
+                  setHasSearched(false);
+                  setAiRecommendations([]);
+                  setFtsResults(null);
+                  clearSearch();
+                }}>
+                  Clear
+                </Button>
+              </div>
             </div>
-            <aside className="space-y-6">
-              <TrendingTopics onTopicClick={handleSearch} />
-            </aside>
+
+            <div className="grid lg:grid-cols-4 gap-8">
+              <div className="lg:col-span-3 space-y-6">
+                {/* AI Mode Results */}
+                {searchMode === 'ai' && (
+                  <>
+                    <AISearchResults
+                      recommendations={aiRecommendations}
+                      loading={aiSearchLoading}
+                      query={searchQuery}
+                      onViewBook={handleViewBook}
+                      onViewChapter={handleViewChapter}
+                    />
+                    {!aiSearchLoading && aiRecommendations.length === 0 && (
+                      <div className="text-center py-16 glass-card rounded-xl">
+                        <Search className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                        <h3 className="text-xl font-semibold mb-2">No AI Results Found</h3>
+                        <p className="text-muted-foreground mb-6">Try rephrasing your query or switch to Keyword search</p>
+                        <Button onClick={() => setSearchMode('keyword')}>Try Keyword Search</Button>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Keyword Mode Results */}
+                {searchMode === 'keyword' && (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm text-muted-foreground">
+                        {keywordBookResults.length} book{keywordBookResults.length !== 1 ? 's' : ''} found
+                        {ftsResults?.chapters?.length ? ` · ${ftsResults.chapters.length} chapter matches` : ''}
+                      </p>
+                      {ftsLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                    </div>
+
+                    {/* Chapter content matches */}
+                    {ftsResults && ftsResults.chapters.length > 0 && (
+                      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
+                        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                          Chapter Content Matches ({ftsResults.chapters.length})
+                        </h3>
+                        <div className="grid gap-3">
+                          {ftsResults.chapters.slice(0, 8).map((ch) => (
+                            <div
+                              key={ch.id}
+                              className="p-4 rounded-lg border border-border bg-card hover:bg-accent/5 cursor-pointer transition-colors"
+                              onClick={() => handleViewChapter(ch.book_id, ch.chapter_key, ch.title)}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-foreground truncate">{ch.title}</p>
+                                  <p className="text-xs text-muted-foreground mt-0.5">
+                                    from <span className="font-medium">{ch.book_title}</span>
+                                    {ch.book_specialty && ` · ${ch.book_specialty}`}
+                                  </p>
+                                  <p
+                                    className="text-sm text-muted-foreground mt-2 line-clamp-2 [&_mark]:bg-primary/20 [&_mark]:text-foreground [&_mark]:rounded-sm [&_mark]:px-0.5"
+                                    dangerouslySetInnerHTML={{ __html: ch.headline }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {/* Book results */}
+                    {keywordBookResults.length === 0 && !ftsLoading ? (
+                      <div className="text-center py-16 glass-card rounded-xl">
+                        <Search className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                        <h3 className="text-xl font-semibold mb-2">No Keyword Results Found</h3>
+                        <p className="text-muted-foreground mb-6">Try different terms or switch to AI search</p>
+                        <Button onClick={() => setSearchMode('ai')}>Try AI Search</Button>
+                      </div>
+                    ) : (
+                      <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-6">
+                        {keywordBookResults.map((book, index) => (
+                          <motion.div
+                            key={book.id}
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.4, delay: (index % 3) * 0.08 }}
+                          >
+                            <BookCard book={book} onView={handleViewBookCard} />
+                          </motion.div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+              <aside className="space-y-6">
+                <TrendingTopics onTopicClick={handleSearch} />
+              </aside>
+            </div>
           </div>
         ) : (
           <div className="space-y-20">
