@@ -64,7 +64,7 @@ export default function Library() {
   const [hasSearched, setHasSearched] = useState(search.hasSearched);
 
   // FTS keyword results
-  const [ftsResults, setFtsResults] = useState<{ books: FTSBookResult[]; chapters: FTSChapterResult[] } | null>(null);
+  const [ftsResults, setFtsResults] = useState<{ books: FTSBookResult[]; chapters: FTSChapterResult[] } | null>(search.ftsResults as any);
   const [ftsLoading, setFtsLoading] = useState(false);
 
   // Filters
@@ -209,10 +209,12 @@ export default function Library() {
         });
 
         if (!cancelled) {
-          setFtsResults({
+          const finalResults = {
             books: Array.from(combinedBookMap.values()).sort((a, b) => b.rank - a.rank).slice(0, 20),
             chapters,
-          });
+          };
+          setFtsResults(finalResults);
+          setSearch({ ftsResults: finalResults });
         }
       } catch {
         if (!cancelled) {
@@ -553,16 +555,10 @@ export default function Library() {
               </div>
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {keywordResults.map((book, index) => (
-                  <motion.div
-                    key={book.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    whileInView={{ opacity: 1, y: 0 }}
-                    viewport={{ once: true }}
-                    transition={{ duration: 0.4, delay: (index % 4) * 0.08 }}
-                  >
+                {keywordResults.map((book) => (
+                  <div key={book.id}>
                     <BookCard book={book} onView={handleView} />
-                  </motion.div>
+                  </div>
                 ))}
               </div>
             )}
@@ -576,16 +572,10 @@ export default function Library() {
               Showing all {books.length} titles — use AI search above for intelligent results
             </p>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {books.map((book, index) => (
-                <motion.div
-                  key={book.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ duration: 0.4, delay: (index % 4) * 0.08 }}
-                >
+              {books.map((book) => (
+                <div key={book.id}>
                   <BookCard book={book} onView={handleView} />
-                </motion.div>
+                </div>
               ))}
             </div>
           </>

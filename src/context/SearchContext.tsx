@@ -15,6 +15,7 @@ interface SearchState {
   mode: 'keyword' | 'ai';
   aiResults: AIResult[];
   hasSearched: boolean;
+  ftsResults: { books: any[]; chapters: any[] } | null;
 }
 
 interface SearchContextType {
@@ -28,6 +29,7 @@ const defaultState: SearchState = {
   mode: 'keyword',
   aiResults: [],
   hasSearched: false,
+  ftsResults: null,
 };
 
 const SearchContext = createContext<SearchContextType | undefined>(undefined);

@@ -1,5 +1,5 @@
 # 🚀 MedCompli — Local Setup & Self-Hosted Supabase Guide
-# Updated: 2026-04-02
+# Updated: 2026-04-07
 
 ## Prerequisites
 
@@ -36,9 +36,9 @@ npm install
 4. Copy-paste the **entire contents** into the SQL Editor
 5. Click **Run** ✅
 
-This creates all tables, enums, RLS policies, functions, triggers, and storage buckets.
+This creates all tables, enums, RLS policies, functions, triggers, search indexes, and storage buckets.
 
-> The SQL export includes `handle_new_user` and `handle_new_user_role` triggers. If the run completes without errors, you do **not** need to create them manually.
+> The SQL export includes `handle_new_user` and `handle_new_user_role` triggers, as well as full-text search vector triggers for books and chapters. If the run completes without errors, you do **not** need to create them manually.
 
 ---
 
@@ -52,7 +52,15 @@ FROM information_schema.triggers
 WHERE trigger_schema = 'public' OR event_object_schema = 'auth';
 ```
 
-You should see `on_auth_user_created` and `on_auth_user_created_role`. If missing, run:
+You should see:
+- `on_auth_user_created` (on `auth.users`)
+- `on_auth_user_created_role` (on `auth.users`)
+- `books_search_vector_trigger` (on `books`)
+- `book_chapters_search_vector_trigger` (on `book_chapters`)
+- `update_enterprises_updated_at` (on `enterprises`)
+- `update_profiles_updated_at` (on `profiles`)
+
+If the auth triggers are missing, run:
 
 ```sql
 CREATE TRIGGER on_auth_user_created
@@ -145,25 +153,27 @@ supabase functions deploy extract-epub-chapters --no-verify-jwt
 supabase functions deploy enrich-book-metadata --no-verify-jwt
 supabase functions deploy process-imported-book --no-verify-jwt
 supabase functions deploy import-s3-books --no-verify-jwt
+supabase functions deploy hybrid-search --no-verify-jwt
 ```
 
 ### Set API Keys
 
 ```bash
+# AI Chapter Q&A (Google Gemini)
+# Get key from: https://aistudio.google.com/apikeys
+supabase secrets set GEMINI_API_KEY=your-gemini-api-key
+
 # AI Search (Groq — Llama 3.3 70B)
 # Get key from: https://console.groq.com/keys
 supabase secrets set GROQ_API_KEY=your-groq-api-key
-
-# PDF Parsing (Google Gemini)
-# Get key from: https://aistudio.google.com/apikeys
-supabase secrets set GEMINI_API_KEY=your-gemini-api-key
 ```
 
 > **Which function uses what:**
 >
 > | Edge Function | API Key | Purpose |
 > |---|---|---|
-> | `gemini-ai` | `GROQ_API_KEY` | AI search, chapter Q&A |
+> | `gemini-ai` | `GEMINI_API_KEY` | Chapter Q&A, AI assistant |
+> | `hybrid-search` | `GROQ_API_KEY` | AI-powered catalog search |
 > | `parse-pdf` | `GEMINI_API_KEY` | PDF chapter extraction |
 > | `extract-pdf-text` | `GEMINI_API_KEY` | PDF text extraction |
 > | `extract-epub-chapters` | — | EPUB chapter parsing |
@@ -288,14 +298,15 @@ Open [http://localhost:8080](http://localhost:8080) in your browser.
 | Created Supabase project | ☐ |
 | Ran SQL schema export | ☐ |
 | Verified auth triggers exist | ☐ |
+| Verified search vector triggers exist | ☐ |
 | Enabled Email auth provider | ☐ |
 | Set Site URL & redirect URLs | ☐ |
 | Updated `.env` with credentials | ☐ |
 | Updated `client.ts` with your Supabase URL | ☐ |
 | Created storage buckets (`book-files`, `book-images`) | ☐ |
-| Deployed all 7 edge functions | ☐ |
-| Set `GROQ_API_KEY` secret | ☐ |
+| Deployed all 8 edge functions | ☐ |
 | Set `GEMINI_API_KEY` secret | ☐ |
+| Set `GROQ_API_KEY` secret | ☐ |
 | Set AWS credentials (if using S3 import) | ☐ |
 | Ran S3 dry run successfully | ☐ |
 | Ran S3 import | ☐ |
@@ -317,8 +328,18 @@ Open [http://localhost:8080](http://localhost:8080) in your browser.
 **User signs up but can't access anything**
 → Check if the user's email domain matches an enterprise `domain`. If no match, the user gets `enterprise_id = NULL`.
 
-**AI features not working**
-→ Verify edge functions are deployed (`supabase functions list`) and `GROQ_API_KEY` / `GEMINI_API_KEY` secrets are set
+**AI assistant not answering from chapter content**
+→ Verify `gemini-ai` edge function is deployed and `GEMINI_API_KEY` is set. The AI receives the full chapter text directly from the reader — no embeddings or RAG pipeline required.
+
+**AI search not working**
+→ Verify `hybrid-search` edge function is deployed and `GROQ_API_KEY` is set.
+
+**Full-text search returns no results**
+→ Check that `search_vector` columns on `books` and `book_chapters` are populated. The search vector triggers auto-populate on INSERT/UPDATE. For existing rows, run:
+```sql
+UPDATE public.books SET title = title;
+UPDATE public.book_chapters SET title = title;
+```
 
 **Storage upload fails**
 → Verify `book-files` and `book-images` buckets exist in Storage

@@ -59,7 +59,10 @@ export function AIPanel({ chapterTitle, chapterContent, bookTitle, bookId, chapt
     fetchQueryCount();
   }, [currentEnterprise]);
 
-  // No longer needed — context is pre-resolved by the shared useChapterContext hook in Reader.tsx
+  // Clear conversation when chapter changes so AI context stays in sync
+  useEffect(() => {
+    setMessages([]);
+  }, [chapterId, chapterTitle]);
 
   const remainingQueries = currentTier 
     ? getRemainingAIQueries(currentTier.id, monthlyQueryCount)
@@ -118,6 +121,7 @@ export function AIPanel({ chapterTitle, chapterContent, bookTitle, bookId, chapt
           type: type || 'default',
           userId: user.id || null,
           enterpriseId: user.enterpriseId || null,
+          
         },
       });
 
@@ -162,7 +166,9 @@ export function AIPanel({ chapterTitle, chapterContent, bookTitle, bookId, chapt
             </div>
             <div>
               <p className="text-sm font-semibold">AI Assistant</p>
-              <p className="text-[10px] text-muted-foreground">Compliance AI • Repository-Scoped</p>
+              <p className="text-[10px] text-muted-foreground truncate max-w-[180px]" title={chapterTitle}>
+                📖 {chapterTitle || 'Loading chapter…'}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-1">

@@ -448,14 +448,14 @@ export default function Reader() {
     setSidebarAIAnswer(undefined);
     try {
       if (aiChapterContent.length < 50) {
-        setSidebarAIAnswer('Chapter content is still loading. Please wait a moment and try again.');
+        setSidebarAIAnswer('⚠_ERR:Chapter content is still loading. Please wait a moment and try again.');
         return;
       }
 
       const { data, error } = await supabase.functions.invoke('gemini-ai', {
         body: {
           prompt: question,
-          chapterContent: aiChapterContent.slice(0, 15000),
+          chapterContent: aiChapterContent.slice(0, 150000),
           chapterTitle: aiChapterTitle || chapter?.title || 'Chapter',
           bookTitle: book?.title || '',
           type: 'default',
@@ -463,16 +463,17 @@ export default function Reader() {
           chapterId: chapter?.id || '',
           userId: user.id || null,
           enterpriseId: user.enterpriseId || null,
+          
         },
       });
       if (error) throw error;
       setSidebarAIAnswer(data?.content || data?.answer || 'No response received.');
     } catch (err: any) {
       const msg = err?.message?.includes('429')
-        ? 'Rate limit exceeded. Please wait a moment and try again.'
+        ? '⚠_ERR:Rate limit exceeded. Please wait a moment and try again.'
         : err?.message?.includes('402')
-        ? 'AI usage limit reached. Contact your administrator.'
-        : 'Failed to get AI response. Please try again.';
+        ? '⚠_ERR:AI usage limit reached. Contact your administrator.'
+        : '⚠_ERR:Could not get a response. Please try again.';
       setSidebarAIAnswer(msg);
     } finally {
       setSidebarAILoading(false);

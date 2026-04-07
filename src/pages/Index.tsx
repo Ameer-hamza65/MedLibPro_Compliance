@@ -241,6 +241,7 @@ export default function Index() {
           filters: filters || {},
           userId: user.id || null,
           enterpriseId: user.enterpriseId || null,
+          
         },
       });
 

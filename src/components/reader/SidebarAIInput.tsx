@@ -14,7 +14,8 @@ export function SidebarAIInput({ onAsk, isLoading = false, lastAnswer }: Sidebar
   const [question, setQuestion] = useState('');
   const [lastQuestion, setLastQuestion] = useState('');
 
-  const isError = lastAnswer?.startsWith('Failed to') || lastAnswer?.includes('error') || lastAnswer?.includes('Error');
+  const ERROR_PREFIX = '⚠_ERR:';
+  const isError = lastAnswer?.startsWith(ERROR_PREFIX) ?? false;
 
   const handleSubmit = useCallback((e?: React.FormEvent) => {
     e?.preventDefault();
@@ -72,7 +73,7 @@ export function SidebarAIInput({ onAsk, isLoading = false, lastAnswer }: Sidebar
               <span className="font-medium text-[10px]">Something went wrong</span>
             </div>
           )}
-          <span>{isError ? 'Could not get a response. Please check that chapter content has loaded and try again.' : lastAnswer}</span>
+          <span>{isError ? lastAnswer.slice(ERROR_PREFIX.length) : lastAnswer}</span>
           {isError && lastQuestion && (
             <Button
               type="button"
