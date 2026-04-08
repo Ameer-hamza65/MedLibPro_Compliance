@@ -141,7 +141,6 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    // 1. Setup AWS S3 Client directly
     const AWS_REGION = Deno.env.get("AWS_REGION") || "us-east-1";
     const AWS_ACCESS_KEY_ID = Deno.env.get("AWS_ACCESS_KEY_ID");
     const AWS_SECRET_ACCESS_KEY = Deno.env.get("AWS_SECRET_ACCESS_KEY");
@@ -159,7 +158,6 @@ serve(async (req) => {
       },
     });
 
-    // 2. Setup Supabase Client
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -239,7 +237,7 @@ serve(async (req) => {
           } catch (coverErr) { console.warn(`Cover upload failed for ${isbn}:`, coverErr); }
         }
 
-        // Extract metadata + chapters from EPUB
+        // Extract metadata + chapters
         let bookTitle = isbn;
         let bookAuthors: string[] = [];
         let bookPublisher: string | null = null;
@@ -254,13 +252,59 @@ serve(async (req) => {
               const metadata = extractEpubMetadata(opfResult.opfContent);
               if (metadata.title) bookTitle = metadata.title;
               if (metadata.authors?.length) bookAuthors = metadata.authors;
-              if (metadata.publisher) bookPublisher = bookPublisher = metadata.publisher;
+              if (metadata.publisher) bookPublisher = metadata.publisher;
               if (metadata.description) bookDescription = metadata.description;
               chapters = extractEpubChapters(unzipped, decoder, opfResult.opfContent, opfResult.opfBasePath);
               console.log(`Extracted ${chapters.length} chapters for ${isbn}: "${bookTitle}"`);
             }
           } catch (parseErr) {
             console.warn(`EPUB parsing failed for ${isbn}:`, parseErr);
+          }
+        } 
+        // ─── THE FIX: ADDED PDF PARSING LOGIC HERE ───
+        else if (fileType === "pdf") {
+          try {
+            console.log(`Asking AI to parse PDF metadata and chapters for ${isbn}...`);
+            // Convert first 5MB to Base64
+            const slice = fileBytes.slice(0, 5 * 1024 * 1024);
+            let binary = "";
+            const chunkSize = 8192;
+            for (let i = 0; i < slice.length; i += chunkSize) {
+              binary += String.fromCharCode(...slice.subarray(i, Math.min(i + chunkSize, slice.length)));
+            }
+            const base64 = btoa(binary);
+
+            // Call your parse-pdf Edge Function
+            const aiRes = await fetch(`${SUPABASE_URL}/functions/v1/parse-pdf`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ pdfBase64: base64, fileName: isbn, firstPagesOnly: false }),
+            });
+
+            if (aiRes.ok) {
+              const aiData = await aiRes.json();
+              if (aiData.title) bookTitle = aiData.title;
+              if (aiData.authors?.length) bookAuthors = aiData.authors;
+              if (aiData.publisher) bookPublisher = aiData.publisher;
+              if (aiData.description) bookDescription = aiData.description;
+              
+              if (aiData.chapters && aiData.chapters.length > 0) {
+                chapters = aiData.chapters.map((ch: any, idx: number) => ({
+                  chapter_key: `pdf-ch-${idx}`,
+                  title: ch.title,
+                  content: ch.contentSummary || "Full PDF text viewable in reader.", 
+                  sort_order: idx
+                }));
+                console.log(`✅ AI Extracted ${chapters.length} chapters from PDF!`);
+              }
+            } else {
+               console.error("parse-pdf failed:", await aiRes.text());
+            }
+          } catch (pdfErr) {
+            console.error("PDF AI parsing error:", pdfErr);
           }
         }
 

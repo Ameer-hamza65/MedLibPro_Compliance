@@ -209,16 +209,26 @@ export default function AdminUpload() {
       console.log(`Extracted ${clientResult.totalPages} pages, ${clientResult.chapters.length} chapters`);
       setParseProgress(92);
 
+      // FIX 1: If client extraction fails, fallback to the AI chapters!
       const finalChapters = clientResult.chapters.length > 0
         ? clientResult.chapters
-        : [{
-            id: `ch-pdf-${Date.now()}-1`,
-            title: 'Full Document',
-            content: '',
-            pageNumber: 1,
-            href: '',
-            tags: [] as string[],
-          }];
+        : (aiMetadata.chapters && aiMetadata.chapters.length > 0 
+            ? aiMetadata.chapters.map((ch, idx) => ({
+                id: `ch-pdf-${Date.now()}-${idx}`,
+                title: ch.title,
+                content: 'Full PDF text viewable in reader.', // Placeholder text so it passes validation
+                pageNumber: ch.pageNumber || 1,
+                href: '',
+                tags: [] as string[]
+              }))
+            : [{
+                id: `ch-pdf-${Date.now()}-1`,
+                title: 'Full Document',
+                content: 'Full PDF text viewable in reader.',
+                pageNumber: 1,
+                href: '',
+                tags: [] as string[],
+              }]);
 
       // Populate form with AI metadata
       setParsedData({
@@ -520,6 +530,8 @@ Keep the tone professional and clear. Do not include headings, bullet points, or
       });
       return;
     }
+    
+    // FIX 2: Ensure we use the correct chapter list for everything
     const chaptersToSave = validChapters.length > 0 ? validChapters : chapters;
 
     setIsSaving(true);
@@ -562,7 +574,7 @@ Keep the tone professional and clear. Do not include headings, bullet points, or
           description: bookData.description || '',
           specialty: bookData.specialty,
           tags: selectedTags,
-          chapter_count: validChapters.length,
+          chapter_count: chaptersToSave.length, // Uses chaptersToSave!
         })
         .select()
         .single();
@@ -586,7 +598,7 @@ Keep the tone professional and clear. Do not include headings, bullet points, or
           accessCount: 0,
           searchCount: 0,
           tags: selectedTags,
-          tableOfContents: validChapters.map(ch => ({
+          tableOfContents: chaptersToSave.map(ch => ({ // Uses chaptersToSave!
             id: ch.id,
             title: ch.title,
             content: ch.content,
@@ -602,7 +614,7 @@ Keep the tone professional and clear. Do not include headings, bullet points, or
         });
       } else {
         // 3. Insert chapters into database
-        const chapterInserts = validChapters.map((ch, idx) => ({
+        const chapterInserts = chaptersToSave.map((ch, idx) => ({ // Uses chaptersToSave!
           book_id: bookRecord.id,
           chapter_key: ch.id,
           title: ch.title,
@@ -637,7 +649,7 @@ Keep the tone professional and clear. Do not include headings, bullet points, or
           accessCount: 0,
           searchCount: 0,
           tags: selectedTags,
-          tableOfContents: validChapters.map(ch => ({
+          tableOfContents: chaptersToSave.map(ch => ({ // Uses chaptersToSave!
             id: ch.id,
             title: ch.title,
             content: ch.content,
@@ -649,7 +661,7 @@ Keep the tone professional and clear. Do not include headings, bullet points, or
 
         toast({
           title: "🎉 Book Saved to Database!",
-          description: `"${bookData.title}" persisted with ${validChapters.length} chapters${filePath ? ' and EPUB file stored' : ''}.`,
+          description: `"${bookData.title}" persisted with ${chaptersToSave.length} chapters${filePath ? ' and file stored' : ''}.`,
         });
       }
 

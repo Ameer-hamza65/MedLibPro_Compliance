@@ -28,9 +28,13 @@ export function BookProvider({ children }: { children: ReactNode }) {
     // Only show loading spinner on initial load, not on background refreshes
     if (lastFetchedAt.current === 0) setIsLoading(true);
     try {
+      // FIX: Join the book_chapters table to grab the TOC metadata (excluding the heavy 'content' column)
       const { data: dbBooks, error } = await supabase
         .from('books')
-        .select('*')
+        .select(`
+          *,
+          book_chapters(chapter_key, title, page_number, sort_order, tags)
+        `)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -39,27 +43,51 @@ export function BookProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const convertedBooks: EpubBook[] = (dbBooks || []).map(db => ({
-        id: db.id,
-        title: db.title,
-        subtitle: db.subtitle || undefined,
-        authors: db.authors || [],
-        publisher: db.publisher || '',
-        isbn: db.isbn || '',
-        publishedYear: db.published_year || new Date().getFullYear(),
-        edition: db.edition || undefined,
-        coverColor: db.cover_color || 'hsl(213 50% 25%)',
-        coverUrl: db.cover_url || undefined,
-        price: 0,
-        description: db.description || '',
-        specialty: db.specialty || 'Nursing',
-        accessCount: db.access_count || 0,
-        searchCount: db.search_count || 0,
-        tags: db.tags || [],
-        filePath: db.file_path || undefined,
-        fileType: db.file_type || undefined,
-        tableOfContents: [],
-      }));
+      const convertedBooks: EpubBook[] = (dbBooks || []).map(db => {
+        // Safely extract and sort the chapters
+        const chapters = Array.isArray(db.book_chapters) ? db.book_chapters : [];
+        const sortedChapters = chapters.sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0));
+
+        return {
+          id: db.id,
+          title: db.title,
+          subtitle: db.subtitle || undefined,
+          authors: db.authors || [],
+          publisher: db.publisher || '',
+          isbn: db.isbn || '',
+          publishedYear: db.published_year || new Date().getFullYear(),
+          edition: db.edition || undefined,
+          coverColor: db.cover_color || 'hsl(213 50% 25%)',
+          coverUrl: db.cover_url || undefined,
+          price: 0,
+          description: db.description || '',
+          specialty: db.specialty || 'Nursing',
+          accessCount: db.access_count || 0,
+          searchCount: db.search_count || 0,
+          tags: db.tags || [],
+          filePath: db.file_path || undefined,
+          fileType: db.file_type || undefined,
+          
+          // FIX: Map the joined chapters into the tableOfContents array
+          tableOfContents: sortedChapters.map((ch: any) => {
+            const titleLower = (ch.title || '').toLowerCase();
+            
+            // Auto-categorize based on title for the Outline Sidebar
+            let category = 'chapter';
+            if (titleLower.includes('appendix')) category = 'appendix';
+            else if (titleLower.includes('front') || titleLower.includes('preface') || titleLower.includes('cover') || titleLower.includes('contents')) category = 'front-matter';
+
+            return {
+              id: ch.chapter_key,
+              title: ch.title || 'Untitled Chapter',
+              pageNumber: ch.page_number || 1,
+              content: '', // Intentionally left blank to save memory! `useChapterContext` will fetch this when clicked.
+              tags: ch.tags || [],
+              category: category
+            };
+          }),
+        };
+      });
 
       setBooks(convertedBooks);
     } catch (err) {

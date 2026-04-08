@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import OpenAI from "https://esm.sh/openai";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,7 +7,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const EXTRACTION_PROMPT = `You are an expert document analyst. Analyze this PDF and extract structured metadata.
+const EXTRACTION_PROMPT = `You are an expert document analyst. Analyze this document and extract structured metadata.
 
 CRITICAL INSTRUCTIONS:
 1. METADATA: Extract the REAL title, subtitle, authors, publisher, ISBN, edition, and publication year from the title page and copyright page. Do NOT infer from the filename.
@@ -50,29 +51,27 @@ serve(async (req) => {
   try {
     const { pdfBase64, pageImages, pageTexts, fileName, firstPagesOnly } = await req.json();
 
-    const hasPdfPayload = typeof pdfBase64 === "string" && pdfBase64.length > 0;
     const safePageImages = Array.isArray(pageImages) ? pageImages.filter((img) => typeof img === "string" && img.startsWith("data:image/")) : [];
     const safePageTexts = Array.isArray(pageTexts) ? pageTexts.filter((text) => typeof text === "string" && text.trim().length > 0) : [];
 
-    if (!hasPdfPayload && safePageImages.length === 0 && safePageTexts.length === 0) {
+    // Make sure we actually have images or text to send to OpenAI
+    if (safePageImages.length === 0 && safePageTexts.length === 0) {
       return new Response(
-        JSON.stringify({ error: "No PDF preview data provided" }),
+        JSON.stringify({ error: "No extracted text or images provided. OpenAI requires pageTexts or pageImages to process the document." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Try Lovable AI Gateway first, fall back to direct Gemini API
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     
-    if (!LOVABLE_API_KEY && !GEMINI_API_KEY) {
+    if (!OPENAI_API_KEY) {
       return new Response(
-        JSON.stringify({ error: "No AI API key configured (LOVABLE_API_KEY or GEMINI_API_KEY)" }),
+        JSON.stringify({ error: "No OPENAI_API_KEY configured in Edge Function secrets." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    console.log(`Parsing PDF: ${fileName}, preview images: ${safePageImages.length}, text pages: ${safePageTexts.length}, firstPagesOnly: ${firstPagesOnly}`);
+    console.log(`Parsing Document: ${fileName}, preview images: ${safePageImages.length}, text pages: ${safePageTexts.length}, firstPagesOnly: ${firstPagesOnly}`);
 
     const promptParts = [
       EXTRACTION_PROMPT,
@@ -81,19 +80,21 @@ serve(async (req) => {
 
     if (safePageTexts.length > 0) {
       promptParts.push(
-        `\n\nExtracted text from the first pages (use this to improve accuracy, but only trust TOC entries that truly appear in the source):\n${safePageTexts
+        `\n\nExtracted text from the pages (use this to improve accuracy, but only trust TOC entries that truly appear in the source):\n${safePageTexts
           .map((text, index) => `--- Page ${index + 1} ---\n${text.slice(0, 5000)}`)
           .join("\n\n")}`
       );
     }
 
-    const contentParts: Array<Record<string, unknown>> = [
+    // Build the multimodal content array for OpenAI
+    const contentParts: Array<any> = [
       {
         type: "text",
         text: promptParts.join(""),
       },
     ];
 
+    // Add images if the frontend successfully generated them
     if (safePageImages.length > 0) {
       for (const image of safePageImages) {
         contentParts.push({
@@ -103,62 +104,35 @@ serve(async (req) => {
           },
         });
       }
-    } else if (hasPdfPayload) {
-      contentParts.push({
-        type: "image_url",
-        image_url: {
-          url: `data:application/pdf;base64,${pdfBase64}`,
-        },
-      });
     }
 
-    const apiUrl = LOVABLE_API_KEY
-      ? "https://ai.gateway.lovable.dev/chat/completions"
-      : "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
-    
-    const apiKey = LOVABLE_API_KEY || GEMINI_API_KEY;
-
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          {
-            role: "user",
-            content: contentParts,
-          },
-        ],
-        temperature: 0.1,
-        max_tokens: firstPagesOnly ? 4096 : 8192,
-      }),
+    // Initialize OpenAI
+    const openai = new OpenAI({
+      apiKey: OPENAI_API_KEY,
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
-      return new Response(
-        JSON.stringify({ error: "AI service error", details: errorText }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    // Call OpenAI
+    const response = await openai.chat.completions.create({
+      model: "gpt-5.4-nano",
+      messages: [
+        {
+          role: "user",
+          content: contentParts,
+        },
+      ],
+      temperature: 0.1,
+      max_completion_tokens: firstPagesOnly ? 4096 : 8192,
+      response_format: { type: "json_object" }, // Forces strict JSON output
+    });
 
-    const data = await response.json();
-    const rawContent = data?.choices?.[0]?.message?.content || "";
+    const rawContent = response.choices[0]?.message?.content || "";
 
     console.log("Raw AI response length:", rawContent.length);
 
-    // Parse JSON from the response (handle potential markdown fences)
+    // Parse JSON from the response
     let parsed;
     try {
-      const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error("No JSON object found in response");
-      }
-      parsed = JSON.parse(jsonMatch[0]);
+      parsed = JSON.parse(rawContent);
     } catch (parseErr) {
       console.error("JSON parse error:", parseErr, "Raw:", rawContent.slice(0, 500));
       return new Response(

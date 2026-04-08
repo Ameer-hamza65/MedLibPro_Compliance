@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import OpenAI from "https://esm.sh/openai";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -76,10 +77,10 @@ serve(async (req) => {
   try {
     const { prompt, chapterContent, chapterTitle, bookTitle, type, bookId, chapterId, userId, enterpriseId } = await req.json();
 
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     
-    if (!GEMINI_API_KEY) {
-      return new Response(JSON.stringify({ error: "No Gemini API key configured in edge function secrets." }), {
+    if (!OPENAI_API_KEY) {
+      return new Response(JSON.stringify({ error: "No OpenAI API key configured in edge function secrets." }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -101,50 +102,29 @@ serve(async (req) => {
       ? `Catalog Data:\n${contextSnippet}\n\nSearch Query: ${prompt}`
       : `Here is the relevant text from the book:\n\n${contextSnippet}\n\nBased ONLY on the text above, answer this: ${prompt || "Analyze this content."}`;
 
-    // Direct connection to Google Gemini API (using their OpenAI compatibility layer)
-    const apiUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
-    const headers = {
-      "Authorization": `Bearer ${GEMINI_API_KEY}`,
-      "Content-Type": "application/json",
-    };
-    const model = "gemini-2.5-flash";
+    // Initialize OpenAI client
+    const openai = new OpenAI({
+      apiKey: OPENAI_API_KEY,
+    });
 
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ],
-        temperature: type === "search" ? 0.2 : 0.4,
-        max_tokens: 2048,
-        ...(type === "search" ? { response_format: { type: "json_object" } } : {}),
-      }),
+    const model = "gpt-5.4-nano";
+
+    // Call OpenAI Chat Completions API
+    const response = await openai.chat.completions.create({
+      model: model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+      temperature: type === "search" ? 0.2 : 0.4,
+      max_completion_tokens: 2048, // <--- FIXED HERE
+      ...(type === "search" ? { response_format: { type: "json_object" } } : {}),
     });
 
     const responseTimeMs = Date.now() - startTime;
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Gemini API error:", response.status, errorText);
-      
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({ error: "Gemini AI service error", details: errorText }), {
-        status: 502,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content || "No response generated.";
-    const tokensUsed = data?.usage?.total_tokens || null;
+    const content = response.choices[0]?.message?.content || "No response generated.";
+    const tokensUsed = response.usage?.total_tokens || null;
 
     // Log to database
     try {
@@ -207,7 +187,7 @@ serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
-    console.error("gemini-ai edge function error:", e);
+    console.error("OpenAI edge function error:", e);
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import OpenAI from "https://esm.sh/openai";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -50,9 +51,6 @@ serve(async (req) => {
       bookFilters.push(`published_year = ${parseInt(filters.year)}`);
     }
     const bookFilterClause = bookFilters.length > 0 ? `AND ${bookFilters.join(" AND ")}` : "";
-
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
 
     const [bookRes, chapterRes] = await Promise.all([
       supabase.rpc("search_books_fts", { search_query: searchQuery, filter_clause: bookFilterClause, max_results: 15 }),
@@ -125,8 +123,10 @@ serve(async (req) => {
       });
     }
 
-    // ─── Gemini Semantic Reranking ───
-    if (!LOVABLE_API_KEY && !GEMINI_API_KEY) {
+    // ─── OpenAI Semantic Reranking ───
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+
+    if (!OPENAI_API_KEY) {
       const results = ftsResults.map((r, i) => ({
         bookId: r.bookId, title: r.title, specialty: r.specialty, collection: null,
         relevanceScore: Math.round(Math.max(95 - i * 8, 20)),
@@ -164,51 +164,40 @@ Results:\n${JSON.stringify(catalogForAI, null, 1)}
 
 IMPORTANT: Return ONLY a JSON array starting with [ and ending with ]. No markdown.`;
 
-    let apiUrl: string;
-    let aiHeaders: Record<string, string>;
-    let model: string;
+    const openai = new OpenAI({
+      apiKey: OPENAI_API_KEY,
+    });
 
-    if (LOVABLE_API_KEY) {
-      apiUrl = "https://ai.gateway.lovable.dev/v1/chat/completions";
-      aiHeaders = { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" };
-      model = "google/gemini-2.5-flash";
-    } else {
-      apiUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
-      aiHeaders = { Authorization: `Bearer ${GEMINI_API_KEY}`, "Content-Type": "application/json" };
-      model = "gemini-2.5-flash";
-    }
+    let aiContent = "";
+    let tokensUsed = null;
 
-    const aiResponse = await fetch(apiUrl, {
-      method: "POST",
-      headers: aiHeaders,
-      body: JSON.stringify({
-        model,
+    try {
+      const response = await openai.chat.completions.create({
+        model: "gpt-5.4-nano",
         messages: [
           { role: "system", content: "You are a search reranking assistant. Return only valid JSON arrays." },
           { role: "user", content: rerankPrompt },
         ],
         temperature: 0.1,
-        max_tokens: 2048,
-      }),
-    });
-
-    const totalTimeMs = Date.now() - startTime;
-
-    if (!aiResponse.ok) {
-      console.error("AI reranking failed:", aiResponse.status);
+        max_completion_tokens: 2048,
+      });
+      
+      aiContent = response.choices[0]?.message?.content || "";
+      tokensUsed = response.usage?.total_tokens || null;
+    } catch (aiError) {
+      console.error("AI reranking failed:", aiError);
       const results = ftsResults.map((r, i) => ({
         bookId: r.bookId, title: r.title, specialty: r.specialty, collection: null,
         relevanceScore: Math.round(Math.max(90 - i * 7, 15)),
         reason: r.headline?.replace(/<[^>]*>/g, "") || r.description?.slice(0, 200) || "Matched by keyword search",
         chapters: r.chapters.slice(0, 3).map(ch => ({ id: ch.id, title: ch.title, reason: ch.headline?.replace(/<[^>]*>/g, "") || "Chapter matches your query" })),
       }));
-      return new Response(JSON.stringify({ results, ftsTimeMs, totalTimeMs, aiReranked: false }), {
+      return new Response(JSON.stringify({ results, ftsTimeMs, totalTimeMs: Date.now() - startTime, aiReranked: false }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const aiData = await aiResponse.json();
-    const aiContent = aiData?.choices?.[0]?.message?.content || "";
+    const totalTimeMs = Date.now() - startTime;
 
     let rerankedResults: any[] = [];
     try {
@@ -241,8 +230,8 @@ IMPORTANT: Return ONLY a JSON array starting with [ and ending with ]. No markdo
         query_type: "hybrid_search", user_prompt: searchQuery,
         ai_response: JSON.stringify(finalResults).slice(0, 10000),
         response_time_ms: totalTimeMs,
-        model_used: `${LOVABLE_API_KEY ? "lovable/" : ""}gemini-2.5-flash`,
-        tokens_used: aiData?.usage?.total_tokens || null,
+        model_used: "gpt-5.4-nano",
+        tokens_used: tokensUsed,
         user_id: userId || null, enterprise_id: enterpriseId || null,
       });
     } catch { /* ignore */ }

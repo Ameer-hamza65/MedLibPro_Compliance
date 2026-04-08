@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import OpenAI from "https://esm.sh/openai";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,19 +13,24 @@ serve(async (req) => {
   }
 
   try {
-    const { pdfBase64, chapters } = await req.json();
+    const { pdfBase64, pageImages, pageTexts, chapters } = await req.json();
 
-    if (!pdfBase64) {
+    const safePageImages = Array.isArray(pageImages) ? pageImages.filter((img) => typeof img === "string" && img.startsWith("data:image/")) : [];
+    const safePageTexts = Array.isArray(pageTexts) ? pageTexts.filter((text) => typeof text === "string" && text.trim().length > 0) : [];
+
+    // OpenAI cannot process raw pdfBase64 in Chat Completions, so we must rely on text or image arrays
+    if (safePageImages.length === 0 && safePageTexts.length === 0) {
       return new Response(
-        JSON.stringify({ error: "No PDF data provided" }),
+        JSON.stringify({ error: "No extracted text or images provided. OpenAI requires pageTexts or pageImages to process the document." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
-    if (!GEMINI_API_KEY) {
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+    
+    if (!OPENAI_API_KEY) {
       return new Response(
-        JSON.stringify({ error: "GEMINI_API_KEY is not configured" }),
+        JSON.stringify({ error: "OPENAI_API_KEY is not configured in Edge Function secrets." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -36,7 +42,7 @@ serve(async (req) => {
       )
       .join("\n");
 
-    const prompt = `You are a document text extractor. Extract the FULL TEXT content from this PDF document, organized by chapters/sections.
+    const prompt = `You are a document text extractor. Extract the FULL TEXT content from this document, organized by chapters/sections.
 
 The document has these chapters:
 ${chapterList}
@@ -67,65 +73,69 @@ Guidelines:
 - Keep all content — do not skip front matter, appendices, or reference sections
 - Skip only headers/footers/page numbers that repeat on every page`;
 
+    console.log(`Extracting text for ${(chapters || []).length} chapters. Text pages: ${safePageTexts.length}, Images: ${safePageImages.length}`);
 
-    console.log(`Extracting text from PDF with ${(chapters || []).length} chapters`);
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`,
+    // Build the multimodal content array for OpenAI
+    const contentParts: Array<any> = [
       {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${GEMINI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gemini-2.5-flash",
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: prompt },
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: `data:application/pdf;base64,${pdfBase64}`,
-                  },
-                },
-              ],
-            },
-          ],
-          temperature: 0.1,
-          max_tokens: 32000,
-        }),
-      }
-    );
+        type: "text",
+        text: prompt,
+      },
+    ];
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
-      return new Response(
-        JSON.stringify({ error: "AI service error", details: errorText }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (safePageTexts.length > 0) {
+      contentParts.push({
+        type: "text",
+        text: `\n\nExtracted document text:\n${safePageTexts
+          .map((text, index) => `--- Page ${index + 1} ---\n${text}`)
+          .join("\n\n")}`
+      });
     }
 
-    const data = await response.json();
-    const rawContent = data?.choices?.[0]?.message?.content || "";
+    if (safePageImages.length > 0) {
+      for (const image of safePageImages) {
+        contentParts.push({
+          type: "image_url",
+          image_url: {
+            url: image,
+          },
+        });
+      }
+    }
+
+    // Initialize OpenAI client
+    const openai = new OpenAI({
+      apiKey: OPENAI_API_KEY,
+    });
+
+    // Call OpenAI API
+    const response = await openai.chat.completions.create({
+      model: "gpt-5.4-nano",
+      messages: [
+        {
+          role: "user",
+          content: contentParts,
+        },
+      ],
+      temperature: 0.1,
+      max_completion_tokens: 32000,
+      response_format: { type: "json_object" }, // Forces strict JSON output
+    });
+
+    const rawContent = response.choices[0]?.message?.content || "";
 
     let parsed;
     try {
-      const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("No JSON found in response");
-      parsed = JSON.parse(jsonMatch[0]);
+      parsed = JSON.parse(rawContent);
     } catch (parseErr) {
-      console.error("JSON parse error:", parseErr);
+      console.error("JSON parse error:", parseErr, "Raw:", rawContent.slice(0, 500));
       return new Response(
-        JSON.stringify({ error: "Failed to parse AI response", raw: rawContent.slice(0, 1000) }),
+        JSON.stringify({ error: "Failed to parse AI response as JSON", raw: rawContent.slice(0, 1000) }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    console.log(`Extracted text for ${parsed.chapters?.length || 0} chapters`);
+    console.log(`Successfully extracted text for ${parsed.chapters?.length || 0} chapters`);
 
     return new Response(
       JSON.stringify(parsed),
