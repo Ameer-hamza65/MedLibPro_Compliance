@@ -180,7 +180,7 @@ async function extractAndUploadImages(
   unzipped: Record<string, Uint8Array>,
   opfDir: string,
   bookId: string,
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   supabaseUrl: string,
 ): Promise<Map<string, string>> {
   const imageUrlMap = new Map<string, string>();
@@ -503,7 +503,7 @@ function htmlToPlainText(html: string): string {
 async function parseEpubFull(
   epubBytes: Uint8Array,
   bookId: string,
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   supabaseUrl: string,
 ): Promise<{
   title?: string;

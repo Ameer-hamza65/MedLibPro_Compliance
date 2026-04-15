@@ -10,7 +10,7 @@ import pdfParse from "pdf-extraction";
 // ==========================================
 let targetFilename = "";
 let targetPrefix = "";
-let importLimit = 1; // Default fallback limit
+let importLimit = 99; // Default fallback limit
 
 process.argv.slice(2).forEach(arg => {
   if (arg.startsWith('--prefix=')) {
@@ -313,9 +313,8 @@ async function runImport() {
         authors: bookAuthors, 
         file_path: storagePath, 
         file_type: ext,
-        collection: collection, 
         cover_url: bookCoverUrl, 
-        cover_color: "hsl(280 50% 40%)", // Aligned
+        cover_color: "hsl(280 50% 40%)",
         specialty: "Nursing", 
         tags: ["nursing"],
         description: bookDescription, 

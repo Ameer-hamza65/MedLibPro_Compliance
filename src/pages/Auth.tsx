@@ -12,6 +12,8 @@ type AuthMode = 'login' | 'signup' | 'forgot';
 
 export default function Auth() {
   const navigate = useNavigate();
+  const searchParams = new URLSearchParams(window.location.search);
+  const redirectTo = searchParams.get('redirect') || '/library';
   const { toast } = useToast();
   const [mode, setMode] = useState<AuthMode>('login');
   const [loading, setLoading] = useState(false);
@@ -24,7 +26,7 @@ export default function Auth() {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (mounted && session) {
-        navigate('/library', { replace: true });
+        navigate(redirectTo, { replace: true });
       }
     });
 
@@ -60,9 +62,9 @@ export default function Auth() {
           .maybeSingle();
         
         if (profile?.role === 'admin' || !profile?.enterprise_id) {
-          navigate('/library');
+          navigate(redirectTo);
         } else {
-          navigate('/library');
+          navigate(redirectTo);
         }
         
         toast({ title: 'Logged in successfully' });

@@ -1,6 +1,6 @@
 -- ============================================================
--- MedCompli / Compliance Collections AI Platform
--- Full Supabase Schema Export (Updated March 23, 2026)
+-- R2 Intelligent Library / Compliance Collections AI Platform
+-- Full Supabase Schema Export (Updated April 14, 2026)
 -- Run this in your own Supabase project's SQL Editor
 -- ============================================================
 
@@ -87,6 +87,7 @@ CREATE TABLE public.books (
   chapter_count integer DEFAULT 0,
   access_count integer DEFAULT 0,
   search_count integer DEFAULT 0,
+  search_vector tsvector,
   uploaded_by uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -102,6 +103,7 @@ CREATE TABLE public.book_chapters (
   page_number integer DEFAULT 1,
   sort_order integer DEFAULT 0,
   tags text[] DEFAULT '{}',
+  search_vector tsvector,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -122,6 +124,17 @@ CREATE TABLE public.individual_purchases (
   book_id text NOT NULL,
   price_paid numeric NOT NULL,
   purchased_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Cart Items (database-backed shopping cart)
+CREATE TABLE public.cart_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  book_id text NOT NULL,
+  price numeric NOT NULL,
+  book_data jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (user_id, book_id)
 );
 
 -- Subscriptions
@@ -181,7 +194,7 @@ CREATE TABLE public.usage_events (
   user_id uuid,
   enterprise_id uuid REFERENCES public.enterprises(id),
   event_type text NOT NULL,
-  book_id text,          -- TEXT (not UUID FK) to support both UUID and slug-style IDs
+  book_id text,
   book_title text,
   metadata jsonb DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now()
@@ -240,6 +253,7 @@ CREATE TABLE public.highlights (
   text text NOT NULL,
   color text NOT NULL DEFAULT 'hsl(48 96% 70%)',
   chunk_index integer NOT NULL DEFAULT 0,
+  cfi_range text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -252,6 +266,7 @@ CREATE TABLE public.annotations (
   text text NOT NULL,
   note text NOT NULL,
   chunk_index integer NOT NULL DEFAULT 0,
+  cfi_range text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -631,6 +646,81 @@ BEGIN
 END;
 $$;
 
+-- Full-text search: books search vector update
+CREATE OR REPLACE FUNCTION public.books_search_vector_update()
+RETURNS trigger LANGUAGE plpgsql SET search_path TO 'public' AS $$
+BEGIN
+  NEW.search_vector :=
+    setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
+    setweight(to_tsvector('english', coalesce(NEW.subtitle, '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(NEW.description, '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(NEW.specialty, '')), 'C') ||
+    setweight(to_tsvector('english', array_to_string(coalesce(NEW.tags, '{}'), ' ')), 'C') ||
+    setweight(to_tsvector('english', coalesce(NEW.publisher, '')), 'D') ||
+    setweight(to_tsvector('english', array_to_string(coalesce(NEW.authors, '{}'), ' ')), 'D');
+  RETURN NEW;
+END;
+$$;
+
+-- Full-text search: chapters search vector update
+CREATE OR REPLACE FUNCTION public.book_chapters_search_vector_update()
+RETURNS trigger LANGUAGE plpgsql SET search_path TO 'public' AS $$
+BEGIN
+  NEW.search_vector :=
+    setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
+    setweight(to_tsvector('english', coalesce(
+      left(NEW.content, 500000), ''
+    )), 'B') ||
+    setweight(to_tsvector('english', array_to_string(coalesce(NEW.tags, '{}'), ' ')), 'C');
+  RETURN NEW;
+END;
+$$;
+
+-- Full-text search: books
+CREATE OR REPLACE FUNCTION public.search_books_fts(search_query text, filter_clause text DEFAULT '', max_results integer DEFAULT 15)
+RETURNS TABLE(id uuid, title text, description text, specialty text, authors text[], publisher text, published_year integer, tags text[], file_type text, rank real, headline text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path TO 'public' AS $$
+BEGIN
+  RETURN QUERY EXECUTE format(
+    'SELECT b.id, b.title, b.description, b.specialty, b.authors, b.publisher,
+            b.published_year, b.tags, b.file_type,
+            ts_rank_cd(b.search_vector, plainto_tsquery(''english'', $1)) AS rank,
+            ts_headline(''english'', coalesce(b.title, '''') || '' '' || coalesce(b.description, ''''),
+              plainto_tsquery(''english'', $1),
+              ''StartSel=<mark>, StopSel=</mark>, MaxWords=40, MinWords=15''
+            ) AS headline
+     FROM public.books b
+     WHERE b.search_vector @@ plainto_tsquery(''english'', $1) %s
+     ORDER BY rank DESC
+     LIMIT $2',
+    filter_clause
+  ) USING search_query, max_results;
+END;
+$$;
+
+-- Full-text search: chapters
+CREATE OR REPLACE FUNCTION public.search_chapters_fts(search_query text, max_results integer DEFAULT 20)
+RETURNS TABLE(id uuid, book_id uuid, chapter_key text, title text, rank real, headline text, book_title text, book_specialty text, book_authors text[])
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path TO 'public' AS $$
+BEGIN
+  RETURN QUERY
+    SELECT c.id, c.book_id, c.chapter_key, c.title,
+           ts_rank_cd(c.search_vector, plainto_tsquery('english', search_query)) AS rank,
+           ts_headline('english', coalesce(c.title, '') || ' ' || coalesce(left(c.content, 2000), ''),
+             plainto_tsquery('english', search_query),
+             'StartSel=<mark>, StopSel=</mark>, MaxWords=35, MinWords=10'
+           ) AS headline,
+           b.title AS book_title,
+           b.specialty AS book_specialty,
+           b.authors AS book_authors
+    FROM public.book_chapters c
+    JOIN public.books b ON b.id = c.book_id
+    WHERE c.search_vector @@ plainto_tsquery('english', search_query)
+    ORDER BY rank DESC
+    LIMIT max_results;
+END;
+$$;
+
 
 -- ========================
 -- 4. TRIGGERS
@@ -656,6 +746,16 @@ CREATE TRIGGER update_profiles_updated_at
   BEFORE UPDATE ON public.profiles
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
+-- Auto-update search_vector on books
+CREATE TRIGGER books_search_vector_trigger
+  BEFORE INSERT OR UPDATE ON public.books
+  FOR EACH ROW EXECUTE FUNCTION public.books_search_vector_update();
+
+-- Auto-update search_vector on book_chapters
+CREATE TRIGGER book_chapters_search_vector_trigger
+  BEFORE INSERT OR UPDATE ON public.book_chapters
+  FOR EACH ROW EXECUTE FUNCTION public.book_chapters_search_vector_update();
+
 
 -- ========================
 -- 5. ROW LEVEL SECURITY
@@ -670,6 +770,7 @@ ALTER TABLE public.books ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.book_chapters ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.book_access ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.individual_purchases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cart_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.departments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_department_membership ENABLE ROW LEVEL SECURITY;
@@ -727,6 +828,11 @@ CREATE POLICY "Users can view their enterprise book access" ON public.book_acces
 -- === individual_purchases ===
 CREATE POLICY "Users can view their own purchases" ON public.individual_purchases FOR SELECT USING (user_id = auth.uid());
 CREATE POLICY "Users can create their own purchases" ON public.individual_purchases FOR INSERT WITH CHECK (user_id = auth.uid());
+
+-- === cart_items ===
+CREATE POLICY "Users can view own cart" ON public.cart_items FOR SELECT USING (user_id = auth.uid());
+CREATE POLICY "Users can add to own cart" ON public.cart_items FOR INSERT WITH CHECK (user_id = auth.uid());
+CREATE POLICY "Users can remove from own cart" ON public.cart_items FOR DELETE USING (user_id = auth.uid());
 
 -- === subscriptions ===
 CREATE POLICY "Users can view their subscriptions" ON public.subscriptions FOR SELECT USING ((user_id = auth.uid()) OR (enterprise_id = get_user_enterprise_id(auth.uid())));
@@ -791,6 +897,7 @@ CREATE POLICY "Platform admins can manage quote requests" ON public.quote_reques
 -- 6. STORAGE
 -- ========================
 INSERT INTO storage.buckets (id, name, public) VALUES ('book-files', 'book-files', false);
+INSERT INTO storage.buckets (id, name, public) VALUES ('book-images', 'book-images', true);
 
 CREATE POLICY "Authenticated users can upload book files"
   ON storage.objects FOR INSERT TO authenticated
@@ -800,11 +907,20 @@ CREATE POLICY "Authenticated users can read book files"
   ON storage.objects FOR SELECT TO authenticated
   USING (bucket_id = 'book-files');
 
+CREATE POLICY "Anyone can read book images"
+  ON storage.objects FOR SELECT
+  USING (bucket_id = 'book-images');
+
+CREATE POLICY "Authenticated users can upload book images"
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'book-images');
+
 
 -- ========================
--- 7. AUTH SETTINGS (configure in Supabase Dashboard)
+-- 7. AUTH SETTINGS (configure in dashboard)
 -- ========================
 -- • Enable Email auth provider
--- • For demo: enable "Auto-confirm email" (disable for production)
+-- • Auto-confirm email: ON (no verification required)
+-- • HIBP password check: OFF (simple passwords allowed)
 -- • Set Site URL to your domain
 -- • Add redirect URLs for your domain

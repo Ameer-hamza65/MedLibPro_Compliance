@@ -81,9 +81,9 @@ export function BookProvider({ children }: { children: ReactNode }) {
               id: ch.chapter_key,
               title: ch.title || 'Untitled Chapter',
               pageNumber: ch.page_number || 1,
-              content: '', // Intentionally left blank to save memory! `useChapterContext` will fetch this when clicked.
+              content: '',
               tags: ch.tags || [],
-              category: category
+              category: category as 'front-matter' | 'chapter' | 'appendix'
             };
           }),
         };

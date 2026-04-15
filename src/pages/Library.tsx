@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Search, Sparkles, Type, Loader2 } from 'lucide-react';
-import { BookCard } from '@/components/BookCard';
+import { CatalogCard } from '@/components/CatalogCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -402,70 +402,63 @@ export default function Library() {
   }, [searchMode, handleAISearch]);
 
   return (
-    <div className="min-h-screen bg-background">
-      <section className="border-b border-border bg-card">
-        <div className="container py-8">
-          <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-            <h1 className="text-3xl font-bold text-foreground">Compliance Content Catalog</h1>
-            <p className="text-muted-foreground mt-1">
-              {books.length} titles across curated compliance collections
-            </p>
-          </motion.div>
-        </div>
+    <div className="min-h-screen bg-white">
+      {/* Hero Section */}
+      <section className="text-center py-6 border-b border-slate-200">
+        <h1 className="text-2xl md:text-3xl font-bold text-slate-900">
+          <span className="font-black">More Knowledge.</span>{' '}
+          <span className="font-normal text-slate-600">Less Cost.</span>{' '}
+          <span className="font-black">One Platform.</span>
+        </h1>
+        <p className="text-sm text-slate-500 mt-1.5">
+          150 publishers • 34 associations • AI-powered discovery
+        </p>
       </section>
 
-      <main className="container py-8">
-        {/* Search Mode Toggle */}
-        <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.05 }} className="mb-4">
-          <Tabs value={searchMode} onValueChange={(v) => setSearchMode(v as 'keyword' | 'ai')}>
-            <TabsList>
-              <TabsTrigger value="keyword" className="gap-1.5">
-                <Type className="h-3.5 w-3.5" />
-                Keyword Search
-              </TabsTrigger>
-              <TabsTrigger value="ai" className="gap-1.5">
-                <Sparkles className="h-3.5 w-3.5" />
-                AI Search
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </motion.div>
-
-        {/* Search Bar */}
+      <main className="container mx-auto px-4 py-6">
+        {/* Search Bar — compact */}
         <motion.form
           onSubmit={handleSearchSubmit}
-          className="flex gap-3 mb-4"
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.1 }}
+          className="flex gap-2 mb-4 max-w-xl mx-auto"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
         >
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <Input
-              placeholder={searchMode === 'ai'
-                ? "Ask AI: e.g. 'infection control protocols' or 'OSHA workplace safety'"
-                : "Search titles, authors, and chapter content..."}
+              placeholder="Search titles, authors, subjects..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
+              className="pl-9 h-9 bg-white border-slate-300 text-sm"
             />
           </div>
           {searchMode === 'ai' && (
-            <Button type="submit" disabled={!searchTerm.trim() || aiLoading}>
-              <Sparkles className="h-4 w-4 mr-1.5" />
-              AI Search
+            <Button type="submit" disabled={!searchTerm.trim() || aiLoading} size="sm" className="bg-blue-700 hover:bg-blue-800 text-white">
+              <Sparkles className="h-3.5 w-3.5 mr-1" /> AI Search
             </Button>
           )}
           {(hasSearched || searchTerm) && (
-            <Button type="button" variant="outline" onClick={clearSearch}>
-              Clear
-            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={clearSearch}>Clear</Button>
           )}
         </motion.form>
 
+        {/* Search Mode Tabs — small */}
+        <div className="flex justify-center mb-4">
+          <Tabs value={searchMode} onValueChange={(v) => setSearchMode(v as 'keyword' | 'ai')}>
+            <TabsList className="h-8">
+              <TabsTrigger value="keyword" className="text-xs gap-1 px-3 h-7">
+                <Type className="h-3 w-3" /> Keyword
+              </TabsTrigger>
+              <TabsTrigger value="ai" className="text-xs gap-1 px-3 h-7">
+                <Sparkles className="h-3 w-3" /> AI Search
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+
         {/* Keyword Filters */}
         {searchMode === 'keyword' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-6">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-4">
             <SearchFilters
               years={years}
               specialties={specialties}
@@ -490,10 +483,10 @@ export default function Library() {
               onViewChapter={handleViewChapter}
             />
             {!aiLoading && aiResults.length === 0 && (
-              <div className="text-center py-12 glass-card rounded-xl">
-                <Search className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
-                <h3 className="text-lg font-semibold mb-1">No AI results found</h3>
-                <p className="text-muted-foreground text-sm mb-4">Try rephrasing your query</p>
+              <div className="text-center py-12">
+                <Search className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+                <h3 className="text-lg font-semibold text-slate-700 mb-1">No AI results found</h3>
+                <p className="text-slate-500 text-sm mb-4">Try rephrasing your query</p>
                 <Button variant="outline" onClick={clearSearch}>Browse All Titles</Button>
               </div>
             )}
@@ -503,42 +496,39 @@ export default function Library() {
         {/* Keyword Results / Browse */}
         {searchMode === 'keyword' && (
           <>
-            <div className="flex items-center gap-2 mb-6">
-              <p className="text-sm text-muted-foreground">
+            <div className="flex items-center gap-2 mb-4">
+              <p className="text-xs text-slate-500">
                 Showing {keywordResults.length} of {books.length} titles
                 {searchTerm && ` matching "${searchTerm}"`}
               </p>
-              {ftsLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+              {ftsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />}
             </div>
 
             {/* Chapter content matches */}
             {searchTerm.trim() && ftsResults && ftsResults.chapters.length > 0 && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-6 space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">
                   Chapter Content Matches ({ftsResults.chapters.length})
                 </h3>
                 <div className="grid gap-3">
                   {ftsResults.chapters.slice(0, 8).map((ch) => (
                     <div
                       key={ch.id}
-                      className="p-4 rounded-lg border border-border bg-card hover:bg-accent/50 cursor-pointer transition-colors"
+                      className="p-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 cursor-pointer transition-colors"
                       onClick={() => handleViewChapter(ch.book_id, ch.chapter_key, ch.title)}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">{ch.title}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">
+                          <p className="text-sm font-medium text-slate-800 truncate">{ch.title}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">
                             from <span className="font-medium">{ch.book_title}</span>
                             {ch.book_specialty && ` · ${ch.book_specialty}`}
                           </p>
                           <p
-                            className="text-sm text-muted-foreground mt-2 line-clamp-2 [&_mark]:bg-primary/20 [&_mark]:text-foreground [&_mark]:rounded-sm [&_mark]:px-0.5"
+                            className="text-sm text-slate-500 mt-2 line-clamp-2 [&_mark]:bg-blue-100 [&_mark]:text-slate-900 [&_mark]:rounded-sm [&_mark]:px-0.5"
                             dangerouslySetInnerHTML={{ __html: ch.headline }}
                           />
                         </div>
-                        <span className="text-xs text-muted-foreground whitespace-nowrap">
-                          rank {ch.rank.toFixed(2)}
-                        </span>
                       </div>
                     </div>
                   ))}
@@ -547,18 +537,16 @@ export default function Library() {
             )}
 
             {keywordResults.length === 0 ? (
-              <div className="text-center py-12 glass-card rounded-xl">
-                <Search className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
-                <h3 className="text-lg font-semibold mb-1">No books found</h3>
-                <p className="text-muted-foreground text-sm mb-4">Try adjusting your filters or search term</p>
+              <div className="text-center py-12">
+                <Search className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+                <h3 className="text-lg font-semibold text-slate-700 mb-1">No books found</h3>
+                <p className="text-slate-500 text-sm mb-4">Try adjusting your filters or search term</p>
                 <Button variant="outline" onClick={clearSearch}>Clear Filters</Button>
               </div>
             ) : (
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 gap-4">
                 {keywordResults.map((book) => (
-                  <div key={book.id}>
-                    <BookCard book={book} onView={handleView} />
-                  </div>
+                  <CatalogCard key={book.id} book={book} onView={handleView} />
                 ))}
               </div>
             )}
@@ -568,14 +556,12 @@ export default function Library() {
         {/* AI mode - browse when not searched */}
         {searchMode === 'ai' && !hasSearched && (
           <>
-            <p className="text-sm text-muted-foreground mb-6">
+            <p className="text-xs text-slate-500 mb-4">
               Showing all {books.length} titles — use AI search above for intelligent results
             </p>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 gap-4">
               {books.map((book) => (
-                <div key={book.id}>
-                  <BookCard book={book} onView={handleView} />
-                </div>
+                <CatalogCard key={book.id} book={book} onView={handleView} />
               ))}
             </div>
           </>

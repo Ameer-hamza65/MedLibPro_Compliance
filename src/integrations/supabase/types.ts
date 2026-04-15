@@ -353,6 +353,33 @@ export type Database = {
         }
         Relationships: []
       }
+      cart_items: {
+        Row: {
+          book_data: Json
+          book_id: string
+          created_at: string
+          id: string
+          price: number
+          user_id: string
+        }
+        Insert: {
+          book_data?: Json
+          book_id: string
+          created_at?: string
+          id?: string
+          price: number
+          user_id: string
+        }
+        Update: {
+          book_data?: Json
+          book_id?: string
+          created_at?: string
+          id?: string
+          price?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       collection_books: {
         Row: {
           added_at: string
