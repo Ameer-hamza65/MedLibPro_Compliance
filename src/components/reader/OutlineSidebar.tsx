@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import type { EpubTocItem } from '@/hooks/useEpubReader';
 import type { PdfTocItem } from '@/hooks/usePdfReader';
 import { SidebarAIInput } from './SidebarAIInput';
+import { InBookSearch } from './InBookSearch';
 
 interface OutlineSidebarProps {
   book: EpubBook;
@@ -396,11 +397,13 @@ export function OutlineSidebar({
           <button
             onClick={() => onSelectChapter(chapter)}
             className={cn(
-              'w-full text-left flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors text-sm',
-              isCurrent ? 'text-primary font-semibold bg-primary/5' : 'text-foreground hover:bg-muted/50'
+              'w-full text-left flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors text-sm border-l-4',
+              isCurrent
+                ? 'bg-blue-50 text-blue-900 font-medium border-blue-600'
+                : 'text-foreground border-transparent hover:bg-muted/50'
             )}
           >
-            <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', isCurrent ? 'bg-primary' : 'bg-muted-foreground/40')} />
+            <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', isCurrent ? 'bg-blue-600' : 'bg-muted-foreground/40')} />
             <span className="truncate">{chapter.title}</span>
           </button>
         )}
@@ -457,12 +460,12 @@ export function OutlineSidebar({
             }}
             data-outline-item-id={item.id}
             className={cn(
-              'flex-1 min-w-0 rounded-md px-3 py-1.5 text-left text-sm transition-colors',
+              'flex-1 min-w-0 rounded-md px-3 py-1.5 text-left text-sm transition-colors border-l-4',
               isCurrent
-                ? 'bg-primary/5 font-semibold text-primary'
+                ? 'bg-blue-50 font-medium text-blue-900 border-blue-600'
                 : descendantActive
-                ? 'text-primary/80'
-                : 'text-foreground hover:bg-muted/50'
+                ? 'text-blue-700/80 border-transparent'
+                : 'text-foreground border-transparent hover:bg-muted/50'
             )}
             style={{ marginLeft: `${depth * 12}px` }}
           >
@@ -506,12 +509,12 @@ export function OutlineSidebar({
             onClick={() => onPdfNavigate?.(item)}
             data-outline-item-id={item.id}
             className={cn(
-              'flex-1 min-w-0 rounded-md px-3 py-1.5 text-left text-sm transition-colors',
+              'flex-1 min-w-0 rounded-md px-3 py-1.5 text-left text-sm transition-colors border-l-4',
               isCurrent
-                ? 'bg-primary/5 font-semibold text-primary'
+                ? 'bg-blue-50 font-medium text-blue-900 border-blue-600'
                 : descendantActive
-                ? 'text-primary/80'
-                : 'text-foreground hover:bg-muted/50'
+                ? 'text-blue-700/80 border-transparent'
+                : 'text-foreground border-transparent hover:bg-muted/50'
             )}
             style={{ marginLeft: `${depth * 12}px` }}
           >
@@ -549,6 +552,17 @@ export function OutlineSidebar({
         </div>
       </div>
 
+      {/* In-book search — second-layer search, scoped to this title only */}
+      <InBookSearch
+        book={book}
+        currentChapterId={currentChapterId}
+        onJumpToChapter={(ch) => {
+          userClickedTocRef.current = true;
+          setTimeout(() => { userClickedTocRef.current = false; }, 1500);
+          onSelectChapter(ch);
+        }}
+      />
+
       {/* AI Assistant - Ask about this chapter */}
       {onAIAsk && (
         <SidebarAIInput
@@ -580,10 +594,10 @@ export function OutlineSidebar({
           <button
             onClick={() => onSelectChapter({ id: '__book-info__', title: 'Book Information', content: '', pageNumber: 0, tags: [] } as Chapter)}
             className={cn(
-              'w-full text-left flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors text-sm mb-1',
+              'w-full text-left flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors text-sm mb-1 border-l-4',
               currentChapterId === '__book-info__'
-                ? 'text-primary font-semibold bg-primary/5'
-                : 'text-foreground hover:bg-muted/50'
+                ? 'bg-blue-50 text-blue-900 font-medium border-blue-600'
+                : 'text-foreground border-transparent hover:bg-muted/50'
             )}
           >
             <BookOpen className="h-3.5 w-3.5 flex-shrink-0" />

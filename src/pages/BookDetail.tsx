@@ -3,10 +3,16 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { supabase } from '@/integrations/supabase/client';
 import { useBooks } from '@/context/BookContext';
+import { useCart } from '@/context/CartContext';
+import { usePurchases } from '@/context/PurchasesContext';
+import { useUser } from '@/context/UserContext';
+import { useToast } from '@/hooks/use-toast';
+import { getBookPrice } from '@/components/CatalogCard';
+import { trackBookView } from '@/lib/analytics';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { BookOpen, ArrowLeft, FileText, Tag, Calendar, Building2, Hash, Layers, Loader2 } from 'lucide-react';
+import { BookOpen, ArrowLeft, FileText, Tag, Calendar, Building2, Hash, Layers, Loader2, ShoppingCart, Check, PlayCircle } from 'lucide-react';
 
 interface BookData {
   id: string;
@@ -42,6 +48,10 @@ export default function BookDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { getBook } = useBooks();
+  const { addToCart, isInCart } = useCart();
+  const { hasPurchased } = usePurchases();
+  const { user } = useUser();
+  const { toast } = useToast();
   const [book, setBook] = useState<BookData | null>(null);
   const [chapters, setChapters] = useState<ChapterData[]>([]);
   const [collections, setCollections] = useState<CollectionMembership[]>([]);
@@ -63,6 +73,7 @@ export default function BookDetail() {
     if (bookRes.data) {
       setBook(bookRes.data as BookData);
       setChapters((chaptersRes.data || []) as ChapterData[]);
+      trackBookView(bookRes.data.id, bookRes.data.title);
     } else {
       // Fallback to BookContext (mock/compliance data)
       const contextBook = getBook(bookId);
@@ -158,10 +169,54 @@ export default function BookDetail() {
                 {book.file_type && <Badge variant="outline" className="uppercase text-xs">{book.file_type}</Badge>}
                 {book.edition && <Badge variant="outline">Edition: {book.edition}</Badge>}
               </div>
-              <div className="mt-4">
-                <Button onClick={() => navigate(`/reader?bookId=${book.id}`)} className="gap-2">
-                  <BookOpen className="h-4 w-4" /> Read Book
-                </Button>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                {hasPurchased(book.id) ? (
+                  <Button
+                    onClick={() => navigate(`/reader?bookId=${book.id}`)}
+                    className="gap-2 bg-green-600 hover:bg-green-700 text-white shadow-md"
+                    size="lg"
+                  >
+                    <PlayCircle className="h-5 w-5" /> Read Now
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      onClick={() => {
+                        const price = getBookPrice(book.id);
+                        if (isInCart(book.id)) {
+                          toast({ title: 'Already in cart', description: book.title });
+                          return;
+                        }
+                        addToCart(book as any, price);
+                        if (!user.isLoggedIn) {
+                          navigate('/auth?redirect=/cart');
+                          return;
+                        }
+                        toast({ title: 'Added to cart', description: book.title });
+                      }}
+                      className="gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-md"
+                      size="lg"
+                      disabled={isInCart(book.id)}
+                    >
+                      {isInCart(book.id) ? (
+                        <><Check className="h-5 w-5" /> In Cart — ${getBookPrice(book.id).toFixed(2)}</>
+                      ) : (
+                        <><ShoppingCart className="h-5 w-5" /> Add to Cart — ${getBookPrice(book.id).toFixed(2)}</>
+                      )}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        const price = getBookPrice(book.id);
+                        if (!isInCart(book.id)) addToCart(book as any, price);
+                        navigate(user.isLoggedIn ? '/cart' : '/auth?redirect=/cart');
+                      }}
+                      size="lg"
+                    >
+                      Buy Now
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
           </motion.div>

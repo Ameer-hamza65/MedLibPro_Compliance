@@ -29,6 +29,8 @@ import type { Chapter } from '@/data/mockEpubData';
 import type { EpubTocItem } from '@/hooks/useEpubReader';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
+import { usePurchases } from '@/context/PurchasesContext';
+import { trackReaderOpen } from '@/lib/analytics';
 
 function flattenEpubToc(items: EpubTocItem[]): EpubTocItem[] {
   return items.flatMap((item) => [item, ...flattenEpubToc(item.subitems || [])]);
@@ -97,6 +99,7 @@ export default function Reader() {
   const [searchParams] = useSearchParams();
   const { user, hasFullAccess } = useUser();
   const { books } = useBooks();
+  const { hasPurchased, loading: purchasesLoading } = usePurchases();
 
   const bookId = searchParams.get('book') || '';
   const chapterId = searchParams.get('chapter') || '';
@@ -304,6 +307,25 @@ export default function Reader() {
       return;
     }
   }, [book, chapter, bookId, navigate, useNativeRenderer]);
+
+  // Entitlement guard: must have purchased OR have enterprise/full access.
+  // Redirects to the book detail page (where the user can buy) if access is missing.
+  useEffect(() => {
+    if (!book) return;
+    if (purchasesLoading) return;
+    if (hasFullAccess || hasPurchased(book.id)) return;
+    // No access — bounce to detail page
+    navigate(`/book/${book.id}`, { replace: true });
+  }, [book, purchasesLoading, hasFullAccess, hasPurchased, navigate]);
+
+  // Track reader open exactly once per (book, session)
+  const trackedReaderOpenRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!book) return;
+    if (trackedReaderOpenRef.current === book.id) return;
+    trackedReaderOpenRef.current = book.id;
+    trackReaderOpen(book.id, book.title);
+  }, [book]);
 
   // Track scroll progress
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {

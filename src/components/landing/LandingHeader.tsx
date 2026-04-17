@@ -116,12 +116,20 @@ export function LandingHeader() {
               Sign Out
             </Button>
           ) : (
-            <Button
-              onClick={() => navigate('/subscribe')}
-              className="bg-lime-500 hover:bg-lime-600 text-white font-semibold shadow-md rounded-full px-6"
-            >
-              Free Institutional Trial
-            </Button>
+            <>
+              <Button
+                onClick={() => navigate('/auth')}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-full px-6 shadow-md"
+              >
+                Join / Sign In
+              </Button>
+              <Button
+                onClick={() => navigate('/subscribe')}
+                className="bg-lime-500 hover:bg-lime-600 text-white font-semibold shadow-md rounded-full px-6"
+              >
+                View Institutional Plans
+              </Button>
+            </>
           )}
         </div>
 
@@ -158,12 +166,21 @@ export function LandingHeader() {
                 <LogOut className="h-4 w-4" />Sign Out
               </Button>
             ) : (
-              <Button
-                onClick={() => { navigate('/subscribe'); setMobileOpen(false); }}
-                className="bg-lime-500 hover:bg-lime-600 text-white font-semibold rounded-full mt-2"
-              >
-                Free Institutional Trial
-              </Button>
+              <>
+                <Button
+                  onClick={() => { navigate('/auth'); setMobileOpen(false); }}
+                  variant="ghost"
+                  className="text-white hover:bg-white/10 justify-start mt-2"
+                >
+                  Join / Sign In
+                </Button>
+                <Button
+                  onClick={() => { navigate('/subscribe'); setMobileOpen(false); }}
+                  className="bg-lime-500 hover:bg-lime-600 text-white font-semibold rounded-full"
+                >
+                  View Institutional Plans
+                </Button>
+              </>
             )}
           </nav>
         </div>

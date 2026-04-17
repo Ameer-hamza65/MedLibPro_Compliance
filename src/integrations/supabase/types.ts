@@ -292,6 +292,7 @@ export type Database = {
           file_type: string | null
           id: string
           isbn: string | null
+          price: number
           published_year: number | null
           publisher: string | null
           search_count: number | null
@@ -316,6 +317,7 @@ export type Database = {
           file_type?: string | null
           id?: string
           isbn?: string | null
+          price?: number
           published_year?: number | null
           publisher?: string | null
           search_count?: number | null
@@ -340,6 +342,7 @@ export type Database = {
           file_type?: string | null
           id?: string
           isbn?: string | null
+          price?: number
           published_year?: number | null
           publisher?: string | null
           search_count?: number | null
@@ -411,6 +414,7 @@ export type Database = {
       }
       compliance_collections: {
         Row: {
+          annual_price_range: string | null
           category: string
           created_at: string
           description: string | null
@@ -422,6 +426,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          annual_price_range?: string | null
           category: string
           created_at?: string
           description?: string | null
@@ -433,6 +438,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          annual_price_range?: string | null
           category?: string
           created_at?: string
           description?: string | null
@@ -774,6 +780,47 @@ export type Database = {
         }
         Relationships: []
       }
+      search_queries: {
+        Row: {
+          book_id: string | null
+          created_at: string
+          enterprise_id: string | null
+          id: string
+          query: string
+          result_count: number | null
+          source: string
+          user_id: string | null
+        }
+        Insert: {
+          book_id?: string | null
+          created_at?: string
+          enterprise_id?: string | null
+          id?: string
+          query: string
+          result_count?: number | null
+          source?: string
+          user_id?: string | null
+        }
+        Update: {
+          book_id?: string | null
+          created_at?: string
+          enterprise_id?: string | null
+          id?: string
+          query?: string
+          result_count?: number | null
+          source?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "search_queries_enterprise_id_fkey"
+            columns: ["enterprise_id"]
+            isOneToOne: false
+            referencedRelation: "enterprises"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subscriptions: {
         Row: {
           enterprise_id: string | null
@@ -907,6 +954,29 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      analytics_activity_trend: {
+        Args: { p_bucket?: string; p_days?: number }
+        Returns: {
+          label: string
+          sessions: number
+        }[]
+      }
+      analytics_title_usage: {
+        Args: { p_limit?: number }
+        Returns: {
+          book_id: string
+          sessions: number
+          title: string
+          views: number
+        }[]
+      }
+      analytics_top_search_terms: {
+        Args: { p_limit?: number }
+        Returns: {
+          count: number
+          term: string
+        }[]
+      }
       approve_pending_users: {
         Args: { p_enterprise_id: string }
         Returns: number

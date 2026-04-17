@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Book, Search, LogOut, Building2, Shield, FileText, FolderOpen, LogIn, Upload, Menu, X, User, ShoppingCart } from 'lucide-react';
+import { Book, Search, LogOut, Building2, Shield, FileText, FolderOpen, LogIn, Upload, Menu, X, User, ShoppingCart, Library as LibraryIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { useEnterprise } from '@/context/EnterpriseContext';
 import { useCart } from '@/context/CartContext';
 import { useUser } from '@/context/UserContext';
+import { CartDrawer } from '@/components/CartDrawer';
 
 export function Header() {
   const location = useLocation();
@@ -41,6 +42,7 @@ export function Header() {
   const navLinks = [
     { label: 'Browse', path: '/library', show: !isStaff },
     { label: 'Collections', path: '/collections', show: true },
+    { label: 'Analytics', path: '/analytics', show: !!session },
   ].filter(l => l.show);
 
   const enterpriseLinks = isEnterpriseMode ? [
@@ -98,15 +100,23 @@ export function Header() {
 
           {/* Right side */}
           <div className="flex items-center gap-3">
-            {/* Cart icon */}
-            <Link to="/cart" className="relative p-2 text-white/70 hover:text-white transition-colors">
-              <ShoppingCart className="h-5 w-5" />
-              {itemCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
-                  {itemCount}
-                </span>
-              )}
-            </Link>
+            {/* Cart drawer trigger */}
+            <CartDrawer
+              trigger={
+                <button
+                  type="button"
+                  aria-label="Open cart"
+                  className="relative p-2 text-white/70 hover:text-white transition-colors"
+                >
+                  <ShoppingCart className="h-5 w-5" />
+                  {itemCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                      {itemCount}
+                    </span>
+                  )}
+                </button>
+              }
+            />
             {/* Admin links */}
             {session && isPlatformAdmin && (
               <div className="hidden md:flex items-center gap-1">
@@ -161,6 +171,11 @@ export function Header() {
                       </Link>
                     </DropdownMenuItem>
                     <DropdownMenuItem asChild>
+                      <Link to="/purchases" className="cursor-pointer">
+                        <LibraryIcon className="mr-2 h-4 w-4" />My Library
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
                       <Link to="/collections" className="cursor-pointer">
                         <FolderOpen className="mr-2 h-4 w-4" />Collections
                       </Link>
@@ -179,14 +194,22 @@ export function Header() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : session ? (
-                <Button
-                  variant="ghost"
-                  onClick={handleLogout}
-                  className="text-white/70 hover:text-white hover:bg-white/10 gap-2"
-                >
-                  <User className="h-4 w-4" />
-                  Sign Out
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Link to="/purchases">
+                    <Button variant="ghost" size="sm" className="text-white/70 hover:text-white hover:bg-white/10 gap-1.5">
+                      <LibraryIcon className="h-4 w-4" />
+                      <span className="hidden lg:inline">My Library</span>
+                    </Button>
+                  </Link>
+                  <Button
+                    variant="ghost"
+                    onClick={handleLogout}
+                    className="text-white/70 hover:text-white hover:bg-white/10 gap-2"
+                  >
+                    <User className="h-4 w-4" />
+                    Sign Out
+                  </Button>
+                </div>
               ) : (
                 <Button
                   onClick={() => navigate('/subscribe')}

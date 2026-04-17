@@ -10,7 +10,7 @@ import pdfParse from "pdf-extraction";
 // ==========================================
 let targetFilename = "";
 let targetPrefix = "";
-let importLimit = 99; // Default fallback limit
+let importLimit = 96; // Default fallback limit
 
 process.argv.slice(2).forEach(arg => {
   if (arg.startsWith('--prefix=')) {

@@ -9,7 +9,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { useCart } from '@/context/CartContext';
 import { useUser } from '@/context/UserContext';
+import { usePurchases } from '@/context/PurchasesContext';
 import { useToast } from '@/hooks/use-toast';
+import { toast as sonnerToast } from 'sonner';
 import { getBookCover } from '@/assets/covers';
 import { Book } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
@@ -20,9 +22,16 @@ export default function Cart() {
   const navigate = useNavigate();
   const { items, removeFromCart, clearCart, totalPrice } = useCart();
   const { user } = useUser();
+  const { markPurchased } = usePurchases();
   const { toast } = useToast();
   const [step, setStep] = useState<CheckoutStep>('cart');
   const [processing, setProcessing] = useState(false);
+
+  // Institutional billing state
+  const [institutionName, setInstitutionName] = useState('');
+  const [poNumber, setPoNumber] = useState('');
+  const [billingName, setBillingName] = useState('');
+  const [billingEmail, setBillingEmail] = useState(user.email || '');
 
   // Payment form state
   const [cardName, setCardName] = useState('');
@@ -51,16 +60,19 @@ export default function Cart() {
 
   const handleSubmitPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cardName || !cardNumber || !expiry || !cvv) {
-      toast({ title: 'Please fill all fields', variant: 'destructive' });
+    if (!institutionName || !billingName || !billingEmail || !cardName || !cardNumber || !expiry || !cvv) {
+      toast({ title: 'Please fill all required fields', variant: 'destructive' });
       return;
     }
     setProcessing(true);
 
-    // Simulate payment processing delay
-    await new Promise(r => setTimeout(r, 2000));
+    // Capture purchased ids BEFORE clearing the cart
+    const purchasedIds = items.map(i => i.book.id);
 
-    // Record each purchase in the database
+    // Simulate payment processing delay
+    await new Promise(r => setTimeout(r, 1500));
+
+    // Record each purchase in the database (best-effort)
     if (user.id) {
       for (const item of items) {
         await supabase.from('individual_purchases').insert({
@@ -70,6 +82,11 @@ export default function Cart() {
         });
       }
     }
+
+    // Instant access provisioning — update global state so Read Now buttons appear
+    markPurchased(purchasedIds);
+
+    sonnerToast.success('Purchase successful. Your content is now available.');
 
     setProcessing(false);
     setStep('complete');
@@ -226,12 +243,67 @@ export default function Cart() {
             >
               <div className="flex items-center gap-3 mb-6">
                 <Lock className="h-5 w-5 text-blue-700" />
-                <h1 className="text-2xl font-bold text-slate-900">Secure Payment</h1>
+                <h1 className="text-2xl font-bold text-slate-900">Institutional Checkout</h1>
               </div>
 
               <Card>
                 <CardContent className="pt-6">
-                  <form onSubmit={handleSubmitPayment} className="space-y-4">
+                  <form onSubmit={handleSubmitPayment} className="space-y-5">
+                    {/* Institutional billing block */}
+                    <div className="space-y-3">
+                      <h2 className="text-sm font-semibold text-slate-900 uppercase tracking-wide">
+                        Institutional Details
+                      </h2>
+                      <div className="space-y-2">
+                        <Label htmlFor="institutionName">Institution Name *</Label>
+                        <Input
+                          id="institutionName"
+                          placeholder="e.g. Sarasota Memorial Hospital"
+                          value={institutionName}
+                          onChange={e => setInstitutionName(e.target.value)}
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="poNumber">Purchase Order (PO) Number</Label>
+                        <Input
+                          id="poNumber"
+                          placeholder="PO-2026-00123 (optional)"
+                          value={poNumber}
+                          onChange={e => setPoNumber(e.target.value)}
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <Label htmlFor="billingName">Billing Contact *</Label>
+                          <Input
+                            id="billingName"
+                            placeholder="Jane Doe"
+                            value={billingName}
+                            onChange={e => setBillingName(e.target.value)}
+                            required
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="billingEmail">Billing Email *</Label>
+                          <Input
+                            id="billingEmail"
+                            type="email"
+                            placeholder="billing@hospital.org"
+                            value={billingEmail}
+                            onChange={e => setBillingEmail(e.target.value)}
+                            required
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    {/* Payment block */}
+                    <h2 className="text-sm font-semibold text-slate-900 uppercase tracking-wide">
+                      Payment
+                    </h2>
                     <div className="space-y-2">
                       <Label htmlFor="cardName">Name on Card</Label>
                       <Input
@@ -317,7 +389,7 @@ export default function Cart() {
                       ) : (
                         <>
                           <Lock className="h-4 w-4 mr-2" />
-                          Pay ${grandTotal.toFixed(2)}
+                          Confirm Purchase — ${grandTotal.toFixed(2)}
                         </>
                       )}
                     </Button>

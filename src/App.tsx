@@ -9,6 +9,7 @@ import ScrollToTop from "@/components/ScrollToTop";
 import { BookProvider } from "@/context/BookContext";
 import { EnterpriseProvider } from "@/context/EnterpriseContext";
 import { CartProvider } from "@/context/CartContext";
+import { PurchasesProvider } from "@/context/PurchasesContext";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import Index from "./pages/Index";
@@ -28,6 +29,8 @@ import RepositoryOverview from "./pages/RepositoryOverview";
 import InstitutionalPricing from "./pages/InstitutionalPricing";
 import SuperAdminDashboard from "./pages/SuperAdminDashboard";
 import Cart from "./pages/Cart";
+import Purchases from "./pages/Purchases";
+import Analytics from "./pages/Analytics";
 
 import NotFound from "./pages/NotFound";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
@@ -54,7 +57,8 @@ function AppLayout() {
             <Route path="/" element={<Index />} />
             <Route path="/library" element={<Library />} />
             <Route path="/cart" element={<Cart />} />
-            <Route path="/reader" element={<Reader />} />
+            <Route path="/purchases" element={<ProtectedRoute><Purchases /></ProtectedRoute>} />
+            <Route path="/reader" element={<ProtectedRoute><Reader /></ProtectedRoute>} />
             <Route path="/book/:id" element={<BookDetail />} />
             <Route path="/admin/upload" element={<RoleProtectedRoute requirePlatformAdmin><AdminUpload /></RoleProtectedRoute>} />
             <Route path="/admin/dashboard" element={<RoleProtectedRoute requirePlatformAdmin><SuperAdminDashboard /></RoleProtectedRoute>} />
@@ -67,6 +71,7 @@ function AppLayout() {
             <Route path="/collections/:collectionId" element={<ProtectedRoute><CollectionDetail /></ProtectedRoute>} />
             <Route path="/audit-logs" element={<RoleProtectedRoute allowedRoles={['admin', 'compliance_officer']}><AuditLogs /></RoleProtectedRoute>} />
             <Route path="/counter-reports" element={<RoleProtectedRoute allowedRoles={['admin', 'compliance_officer']}><CounterReporting /></RoleProtectedRoute>} />
+            <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
 
             <Route path="/accessibility" element={<Accessibility />} />
             <Route path="/subscribe" element={<InstitutionalPricing />} />
@@ -87,6 +92,7 @@ const App = () => {
       <BookProvider>
         <EnterpriseProvider>
           <CartProvider>
+          <PurchasesProvider>
           <SearchProvider>
           <TooltipProvider>
             <Toaster />
@@ -96,6 +102,7 @@ const App = () => {
             </BrowserRouter>
           </TooltipProvider>
           </SearchProvider>
+          </PurchasesProvider>
           </CartProvider>
         </EnterpriseProvider>
       </BookProvider>

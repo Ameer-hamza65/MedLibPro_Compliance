@@ -60,8 +60,8 @@ export function LandingHero() {
           {/* AI Search Bar */}
           <div className="max-w-xl mb-3">
             <div className="flex items-center bg-white/95 backdrop-blur-sm rounded-full shadow-[0_0_30px_rgba(59,130,246,0.4)] border border-blue-300/50 overflow-hidden">
-              <div className="pl-4 pr-2 text-blue-600">
-                <Bot className="h-7 w-7" />
+              <div className="pl-3 sm:pl-4 pr-1 sm:pr-2 text-blue-600 flex-shrink-0">
+                <Bot className="h-5 w-5 sm:h-7 sm:w-7" />
               </div>
               <input
                 type="text"
@@ -69,16 +69,16 @@ export function LandingHero() {
                 onChange={e => setQuery(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleSearch()}
                 placeholder="Ask me anything..."
-                className="flex-1 py-3.5 px-2 text-slate-700 placeholder-slate-400 bg-transparent outline-none text-base"
+                className="flex-1 min-w-0 py-3 sm:py-3.5 px-2 text-slate-700 placeholder-slate-400 bg-transparent outline-none text-sm sm:text-base"
               />
               <Button
                 onClick={handleSearch}
-                className="m-1.5 rounded-full bg-blue-700 hover:bg-blue-800 text-white px-8 font-semibold text-base"
+                className="m-1 sm:m-1.5 rounded-full bg-blue-700 hover:bg-blue-800 text-white px-4 sm:px-8 font-semibold text-sm sm:text-base flex-shrink-0"
               >
                 Search
               </Button>
             </div>
-            <p className="text-blue-200 font-bold text-lg mt-4">
+            <p className="text-blue-200 font-bold text-base sm:text-lg mt-4">
               AI-Powered Agent Search Bar
             </p>
           </div>

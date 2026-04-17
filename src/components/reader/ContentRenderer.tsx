@@ -103,7 +103,7 @@ export function ContentRenderer({
   };
 
   return (
-    <div ref={contentRef} className="max-w-3xl mx-auto space-y-2">
+    <div ref={contentRef} className="max-w-3xl xl:max-w-4xl mx-auto space-y-2 text-slate-900 leading-relaxed">
       {chunks.map((chunk, idx) => {
         const chunkHls = getChunkHighlights(idx);
         const chunkAns = getChunkAnnotations(idx);
